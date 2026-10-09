@@ -1,0 +1,16 @@
+# conda env for the LAGRANTO pipeline. Lives on /homedata so $HOME stays code-only:
+#   export CONDA_PKGS_DIRS=/homedata/$USER/conda/pkgs
+#   conda env create -p /homedata/$USER/conda/lagranto -f environment.yml
+name: lagranto
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - cdo=2.2.2          # same version as Levante (stage 01 relies on its nhym/nhyi naming)
+  - eccodes
+  - python-cdo
+  - xarray
+  - netcdf4
+  - numpy
+  - pandas
+  - joblib

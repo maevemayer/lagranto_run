@@ -89,8 +89,13 @@ directory has to exist: `source config.sh` once creates it.
 
 ## Prerequisites (one-time, manual)
 
-- Run `bash tools/check_spiritx_env.sh` (repo root) and fix every `[CHECK]` in
-  `config.sh` accordingly.
+- Create the conda env (repo root, once):
+  ```bash
+  export CONDA_PKGS_DIRS=/homedata/$USER/conda/pkgs
+  conda env create -p /homedata/$USER/conda/lagranto -f environment.yml
+  ```
+- Run `bash tools/check_spiritx_env.sh` (repo root) and fix any `[CHECK]` left in
+  `config.sh`.
 - Set `set interval = "6"` in `$LAGRANTO/goodies/datelist.sh` (was `"3"`).
 
 `submit_all.sh` refuses to submit until the datelist interval is 6.
@@ -152,8 +157,8 @@ What changed for spiritx (the physics is untouched):
 | ERA5 input | `/pool/data/ERA5/{ET,E5}/{ml,sf}/an/1H/<code>/…_<code>.grb`, one file per variable, spectral T/U/V | `/proju/flexpart/flexpart_in/ERA5/EN-true/YYYY/ERA5ENYYYYMMDD.grb`, all fields in one daily file; picked with `cdo -selname` (`era5_input.py`) |
 | ET/E5 choice | stage 02 used ET for the current year | single pool for all years |
 | surface pressure | `sp` (134) | `sp`, or `exp(lnsp)` if `sp` is absent |
-| Python/CDO | `module load python3`, spack CDO path | conda env (`CONDA_ENV`), optional `CDO_MODULE` |
-| Slurm | `--account=uc1275 --partition=shared`, up to 84 CPUs | no account, `--partition=zen16` [CHECK], ≤32 CPUs |
+| Python/CDO | `module load python3`, spack CDO 2.2.2 | own conda env from `environment.yml` on `/homedata` (CDO 2.2.2 pinned) |
+| Slurm | `--account=uc1275 --partition=shared`, up to 84 CPUs | no account, `--partition=zen4`, ≤32 CPUs |
 | LAGRANTO | `/work/uc1275/…/lagranto.shellscript`, intel/netcdf modules | `/home/mmayer/code/lagranto.era5.test/lagranto.shellscript`, no modules (`LAGRANTO_LD_LIBRARY_PATH` if needed) |
 | outputs | `/work/uc1275/…`, `/scratch/u/u301827/…`, Slurm logs in the submit dir | netCDF (incl. P/S) in `/scratchx/$USER/lagranto_run/`, logs + trajectories in `/homedata/$USER/lagranto_run/`, nothing in `$HOME` |
 | param files | copied from fixed `/work` paths (incl. a stale `create_startf.param` that create_startf.sh overwrites anyway) | `tracevars.shellscript` versioned in `lagranto_params/` |

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=sfiles6h
-#SBATCH --partition=zen16           # [CHECK] spiritx partition (sinfo -s)
+#SBATCH --partition=zen4
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G

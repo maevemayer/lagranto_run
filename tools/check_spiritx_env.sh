@@ -42,7 +42,12 @@ grep -n "interval" "${LAGRANTO_ROOT}/goodies/datelist.sh" | head -5
 
 F="${ERA5_DIR}/${DAY:0:4}/ERA5EN${DAY}.grb"
 hr "ERA5 input: $F"
-ls -lh "$F" || exit 1
+if ! ls -lh "$F"; then
+    Y="${ERA5_DIR}/${DAY:0:4}"
+    echo "  -> files in $Y: $(ls "$Y" 2>/dev/null | grep -c '\.grb$')"
+    ls "$Y" 2>/dev/null | grep '\.grb$' | sed -n '1p;$p' | sed 's/^/     first\/last: /'
+    exit 1
+fi
 
 hr "variables / levels / grid (cdo sinfon)"
 cdo -s sinfon "$F" 2>&1 | head -60

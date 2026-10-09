@@ -21,8 +21,8 @@
 # Slurm jobs are non-interactive shells, so the conda env is activated
 # explicitly. The env needs: python-cdo, xarray, netCDF4, pandas, joblib
 # (and a `cdo` binary, either from the same env or from CDO_MODULE).
-export CONDA_ENV="${CONDA_ENV:-base}"                         # [CHECK]
-export CDO_MODULE="${CDO_MODULE:-}"     # e.g. "cdo/2.2.2" if cdo comes from `module load`  [CHECK]
+export CONDA_ENV="${CONDA_ENV:-/homedata/${USER}/conda/lagranto}"   # from environment.yml (repo root)
+export CDO_MODULE="${CDO_MODULE:-}"     # cdo 2.2.2 comes from the conda env; /usr/bin/cdo is 1.9.9 (too old)
 export CDO_BIN_DIR="${CDO_BIN_DIR:-}"   # optional: directory prepended to PATH for cdo
 
 _cfg_flags="$-"; set +u          # module/conda scripts trip over `set -u`
@@ -44,7 +44,7 @@ export PYTHONDONTWRITEBYTECODE=1        # no __pycache__ in the code tree
 # No account on spiritx. The partition is also hard-coded in the #SBATCH
 # headers (they cannot read this file); submit_all.sh passes this value on the
 # sbatch command line, which overrides the header.
-export SLURM_PARTITION="${SLURM_PARTITION:-zen16}"           # [CHECK] sinfo -s
+export SLURM_PARTITION="${SLURM_PARTITION:-zen4}"   # 64 cores / 254 GB nodes (4 GB/core)
 
 # ---- ERA5 input (FLEXPART-input pool on /proju) -----------------------------
 # One GRIB file per day holding ALL fields (model-level T/U/V/W + surface):
