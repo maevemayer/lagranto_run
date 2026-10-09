@@ -43,24 +43,36 @@ def process_era5_daily(year, month, day, var):
 
 # --------------------------------------------------- pressure & dp (as-is) ---
 def compute_pressure_and_dp(sp_file, t_file, output_dir, date_str):
-    """UNCHANGED from the notebook (hybrid p and dp from T-file coefficients)."""
+    """Same math as the notebook (hybrid p and dp from T-file coefficients).
+
+    Only change: the coefficient dimensions are looked up instead of being
+    hard-coded as nhym/nhyi (cdo 2.2.2 on Levante), so any cdo version works.
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     ds_t = xr.open_dataset(t_file)
     ds_sp = xr.open_dataset(sp_file)
     sp = ds_sp["sp"]
 
-    hyam = ds_t["hyam"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
-    hybm = ds_t["hybm"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
-    hyai = ds_t["hyai"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
-    hybi = ds_t["hybi"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
+    missing = [v for v in ("hyam", "hybm", "hyai", "hybi") if v not in ds_t]
+    if missing:
+        raise KeyError(f"{t_file} lacks {missing} (has: {list(ds_t.variables)})")
+    mid_dim, = ds_t["hyam"].dims        # nhym with cdo 2.2.2
+    half_dim, = ds_t["hyai"].dims       # nhyi with cdo 2.2.2
+    # positional differences below: drop any coordinate labels on these dims
+    coef = ds_t[["hyam", "hybm", "hyai", "hybi"]].drop_vars([mid_dim, half_dim], errors="ignore")
+
+    hyam = coef["hyam"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
+    hybm = coef["hybm"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
+    hyai = coef["hyai"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
+    hybi = coef["hybi"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
 
     p = hyam + hybm * sp
     p_half = hyai + hybi * sp
-    dp = p_half.isel(nhyi=slice(1, None)) - p_half.isel(nhyi=slice(None, -1))
+    dp = p_half.isel({half_dim: slice(1, None)}) - p_half.isel({half_dim: slice(None, -1)})
 
-    p = p.rename({"nhym": "lev"})
-    dp = dp.rename({"nhyi": "lev"})
+    p = p.rename({mid_dim: "lev"}) if mid_dim != "lev" else p
+    dp = dp.rename({half_dim: "lev"})
     p = p.assign_coords(lev=ds_t["lev"]); p.name = "p"; p.attrs["units"] = "Pa"
     dp = dp.assign_coords(lev=ds_t["lev"]); dp.name = "dp"; dp.attrs["units"] = "Pa"
 

@@ -21,8 +21,8 @@
 # Slurm jobs are non-interactive shells, so the conda env is activated
 # explicitly. The env needs: python-cdo, xarray, netCDF4, pandas, joblib
 # (and a `cdo` binary, either from the same env or from CDO_MODULE).
-export CONDA_ENV="${CONDA_ENV:-/homedata/${USER}/conda/lagranto}"   # from environment.yml (repo root)
-export CDO_MODULE="${CDO_MODULE:-}"     # cdo 2.2.2 comes from the conda env; /usr/bin/cdo is 1.9.9 (too old)
+export CONDA_ENV="${CONDA_ENV:-/homedata/${USER}/conda/thesis}"   # from environment.yml (repo root)
+export CDO_MODULE="${CDO_MODULE:-}"     # cdo comes from the conda env; /usr/bin/cdo is 1.9.9 (too old)
 export CDO_BIN_DIR="${CDO_BIN_DIR:-}"   # optional: directory prepended to PATH for cdo
 
 _cfg_flags="$-"; set +u          # module/conda scripts trip over `set -u`

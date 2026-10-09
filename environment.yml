@@ -1,16 +1,81 @@
-# conda env for the LAGRANTO pipeline. Lives on /homedata so $HOME stays code-only:
+# One env for everything on spiritx: the LAGRANTO pipeline, colindex2 / analogues,
+# and the thesis analysis + plotting. Merged from the three Levante envs
+# (analogues-2026, thesis, phd). Lives on /homedata so $HOME stays code-only:
+#
 #   export CONDA_PKGS_DIRS=/homedata/$USER/conda/pkgs
-#   conda env create -p /homedata/$USER/conda/lagranto -f environment.yml
-name: lagranto
+#   conda env create -p /homedata/$USER/conda/thesis -f environment.yml
+#   conda activate /homedata/$USER/conda/thesis
+#   python -m ipykernel install --user --name thesis --display-name "thesis (spiritx)"
+#
+# Left out on purpose: torch + CUDA (analogues-2026, pip), cuda-cudart (thesis):
+# spiritx compute nodes have no GPU. Everything else from phd (py3.7, xarray
+# 0.17) is superseded by newer versions here.
+name: thesis
 channels:
   - conda-forge
 dependencies:
-  - python=3.11
-  - cdo=2.2.2          # same version as Levante (stage 01 relies on its nhym/nhyi naming)
-  - eccodes
-  - python-cdo
-  - xarray
-  - netcdf4
-  - numpy
+  - python=3.10
+  - numpy=1.26                # as pinned in analogues-2026 (colindex2 env)
+  # --- data / numerics
+  - scipy
   - pandas
+  - xarray
+  - dask
+  - netcdf4
+  - h5netcdf
+  - cftime
+  - bottleneck
+  - numba
   - joblib
+  - tqdm
+  - scikit-learn
+  - scikit-image
+  - statsmodels
+  # --- GRIB / CDO / NCO / ECMWF + CDS access
+  - cdo                       # any version: stage 01 no longer depends on cdo's dim names
+  - python-cdo
+  - nco
+  - eccodes
+  - cfgrib
+  - pygrib
+  - cdsapi
+  - ecmwf-api-client
+  - copernicusmarine
+  - earthaccess
+  - s3fs
+  # --- geo / regridding
+  - xesmf
+  - esmpy
+  - metpy
+  - cartopy
+  - basemap
+  - geopandas
+  - shapely
+  - pyogrio
+  - rasterio
+  - regionmask
+  - gsw
+  # --- plotting
+  - matplotlib
+  - seaborn
+  - cmocean
+  - cmcrameri
+  # --- jupyter
+  - ipykernel
+  - jupyter_client
+  - ipyleaflet
+  # --- build tools (sdfc compiles C++ on pip install)
+  - pip
+  - git
+  - eigen
+  - pybind11
+  - cxx-compiler
+  - pip:
+      - colindex2==2.11.0
+      - sdfc==0.9.0
+      - sklearn-xarray==0.4.0
+      - nco==1.1.0             # python wrapper (the nco binaries come from conda)
+      - cachier
+      - pycoare
+      - nicopal
+      - pqdm

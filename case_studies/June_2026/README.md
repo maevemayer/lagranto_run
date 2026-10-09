@@ -92,7 +92,7 @@ directory has to exist: `source config.sh` once creates it.
 - Create the conda env (repo root, once):
   ```bash
   export CONDA_PKGS_DIRS=/homedata/$USER/conda/pkgs
-  conda env create -p /homedata/$USER/conda/lagranto -f environment.yml
+  conda env create -p /homedata/$USER/conda/thesis -f environment.yml
   ```
 - Run `bash tools/check_spiritx_env.sh` (repo root) and fix any `[CHECK]` left in
   `config.sh`.
@@ -157,7 +157,7 @@ What changed for spiritx (the physics is untouched):
 | ERA5 input | `/pool/data/ERA5/{ET,E5}/{ml,sf}/an/1H/<code>/…_<code>.grb`, one file per variable, spectral T/U/V | `/proju/flexpart/flexpart_in/ERA5/EN-true/YYYY/ERA5ENYYYYMMDD.grb`, all fields in one daily file; picked with `cdo -selname` (`era5_input.py`) |
 | ET/E5 choice | stage 02 used ET for the current year | single pool for all years |
 | surface pressure | `sp` (134) | `sp`, or `exp(lnsp)` if `sp` is absent |
-| Python/CDO | `module load python3`, spack CDO 2.2.2 | own conda env from `environment.yml` on `/homedata` (CDO 2.2.2 pinned) |
+| Python/CDO | `module load python3`, spack CDO 2.2.2 | `thesis` conda env from `environment.yml` on `/homedata` (any CDO; also colindex2 + analysis stack) |
 | Slurm | `--account=uc1275 --partition=shared`, up to 84 CPUs | no account, `--partition=zen4`, ≤32 CPUs |
 | LAGRANTO | `/work/uc1275/…/lagranto.shellscript`, intel/netcdf modules | `/home/mmayer/code/lagranto.era5.test/lagranto.shellscript`, no modules (`LAGRANTO_LD_LIBRARY_PATH` if needed) |
 | outputs | `/work/uc1275/…`, `/scratch/u/u301827/…`, Slurm logs in the submit dir | netCDF (incl. P/S) in `/scratchx/$USER/lagranto_run/`, logs + trajectories in `/homedata/$USER/lagranto_run/`, nothing in `$HOME` |
@@ -177,9 +177,10 @@ Answer these with `tools/check_spiritx_env.sh` before the first run:
 3. **Levels.** 137 levels keeps the math identical. With fewer levels, check that
    the 200 hPa starts and the hybrid coefficients (`hyai/hybi/hyam/hybm` in the
    netCDF that cdo writes) still make sense.
-4. **CDO version.** `compute_pressure_and_dp` assumes cdo writes the
-   coefficients on `nhym`/`nhyi` dims (true for Levante's cdo 2.2.2). A different
-   version may name them differently.
+4. **CDO version.** Any version works: `compute_pressure_and_dp` looks up the
+   coefficient dims (`nhym`/`nhyi` in cdo 2.2.2) instead of hard-coding them;
+   output is bit-identical to the notebook code. Check that the P-files still
+   carry `hyam hybm hyai hybi` (LAGRANTO reads them).
 
 Quick one-day test of the ERA5 reader (stage 01) before submitting everything:
 ```bash

@@ -21,14 +21,14 @@ if command -v conda >/dev/null; then
 fi
 which python3
 python3 - <<'EOF'
-for m in ("cdo", "xarray", "netCDF4", "pandas", "joblib", "numpy"):
+for m in ("cdo", "xarray", "netCDF4", "pandas", "joblib", "numpy", "colindex2", "xesmf", "cartopy", "metpy"):
     try:
         mod = __import__(m); print(f"  ok   {m:8s} {getattr(mod, '__version__', '')}")
     except Exception as e:
         print(f"  MISS {m:8s} {e}")
 EOF
 
-hr "cdo binary (Levante used 2.2.2)"
+hr "cdo binary (from the conda env; Levante used 2.2.2)"
 which cdo && cdo --version 2>&1 | head -2
 command -v module >/dev/null && module -t avail cdo 2>&1 | head
 
