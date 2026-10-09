@@ -102,11 +102,8 @@ directory has to exist: `source config.sh` once creates it.
 - Run `bash tools/check_spiritx_env.sh` (repo root) and fix any `[CHECK]` left in
   `config.sh`.
 - Set `set interval = "6"` in `$LAGRANTO/goodies/datelist.sh` (was `"3"`).
-- `trace` must handle 137 levels: the LAGRANTO source has `parameter (nlevmax=100)`
-  in `trace/trace.f90`, which makes `trace` segfault on full ERA5 (caltra is
-  fine). Set it to 200 and rebuild `trace` (spiritx: done Oct 2026).
 
-`submit_all.sh` refuses to submit until the datelist interval is 6 and `nlevmax` >= 137.
+`submit_all.sh` refuses to submit until the datelist interval is 6.
 
 ## Run an event
 
