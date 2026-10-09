@@ -67,6 +67,19 @@ def _select(var, path):
     raise KeyError(f"{grib_name!r} not found in {path} (has: {' '.join(sorted(names))})")
 
 
+def _check_hours(path, var_file, var):
+    """Every day must provide all HOURS_CSV snapshots (00/06/12/18): a day with
+    fewer would silently give a climatology/P-file without some slots."""
+    want = sorted(int(h) for h in HOURS_CSV.split(","))
+    with xr.open_dataset(path) as ds:
+        got = sorted(int(h) for h in ds["time"].dt.hour.values) if "time" in ds.dims else []
+    if got != want:
+        os.remove(path)
+        raise RuntimeError(f"{var_file}: {var} has hours {got} at {HOURS_CSV} UTC, "
+                           f"expected {want} - check the time steps of this file "
+                           f"(cdo -s showtime {var_file})")
+
+
 def regrid_daily(year, month, day, var, out_dir, tag):
     """Regrid one day of `var` (REMAP_GRID, or native), keeping ONLY hours 00/06/12/18.
 
@@ -97,9 +110,13 @@ def regrid_daily(year, month, day, var, out_dir, tag):
     sel = f"-selhour,{HOURS_CSV} {_select(var, var_file)}"
     if LEVELS and var != "sp":
         sel = f"-sellevidx,{LEVELS} {sel}"     # model levels by index, e.g. 18/137
-    # --reduce_dim drops the size-1 level axis of sp derived from lnsp
-    cdo.setgridtype("regular", input=f"{sel} {var_file}",
-                    output=reg_file, options=f"-f nc {CDO_GRIB_OPTS} --reduce_dim")
+    # --reduce_dim drops the size-1 level axis of sp derived from lnsp; only
+    # for that field: it would also drop a time axis that has a single step
+    opts = f"-f nc {CDO_GRIB_OPTS}"
+    if var == "sp" and "-selname,lnsp" in sel:
+        opts += " --reduce_dim"
+    cdo.setgridtype("regular", input=f"{sel} {var_file}", output=reg_file, options=opts)
+    _check_hours(reg_file, var_file, var)
 
     # Step 2: spectral -> gridpoint (pass-through if not spectral)
     try:
