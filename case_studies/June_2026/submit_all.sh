@@ -36,6 +36,16 @@ SB=(sbatch --parsable --partition="${SLURM_PARTITION}"
     --output="${SLURM_LOG_DIR}/%x-%j.out" --chdir="${SLURM_LOG_DIR}")
 
 # ---- pre-flight: fail now rather than after hours in the queue ----
+# Two chains of the same run share their working folders and would overwrite
+# each other's files (a second stage 02 corrupted the climatology this way).
+# Jobs are tagged with the run via --comment; refuse if any are still queued.
+RUN_TAG="lagranto:${RUN_NAME}"
+if squeue -h -u "${USER}" -o "%k" 2>/dev/null | grep -qxF "${RUN_TAG}"; then
+    echo "jobs of run ${RUN_NAME} are still queued/running:"
+    squeue -u "${USER}" -o "%.10i %.10j %.2t %.10M %k" | grep -F -e JOBID -e "${RUN_TAG}"
+    echo "wait for them or scancel them first"; exit 1
+fi
+SB+=(--comment="${RUN_TAG}")
 if [[ ! -s "${LAGRANTO_PARAM_DIR}/tracevars.shellscript" ]]; then
     echo "missing ${LAGRANTO_PARAM_DIR}/tracevars.shellscript"; exit 1
 fi
