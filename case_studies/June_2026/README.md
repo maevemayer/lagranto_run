@@ -100,14 +100,25 @@ directory has to exist: `source config.sh` once creates it.
 
 `submit_all.sh` refuses to submit until the datelist interval is 6.
 
-## Run the ERA5T 2026 event
+## Run an event
 
+Everything event-specific is in the **EVENT block at the top of `config.sh`**:
+
+| setting | default (July 2022 heatwave) |
+|---|---|
+| `RUN_NAME` | `2022_July/corrected_6h` (sub-path under /scratchx and /homedata) |
+| `TRAJ_START`, `TRAJ_END` | `2022-07-13`, `2022-07-24`: every 6 h from 13 Jul 00 UTC to 24 Jul 18 UTC |
+| `ARRIVAL_LON_MIN/MAX`, `ARRIVAL_LAT_MIN/MAX` | -5.5..5.0 E, 44.5..55.0 N (lon in -180..180, boxes across 0E are fine) |
+| `ARRIVAL_DLON`, `ARRIVAL_DLAT` | 0.5, 0.5 deg |
+| `ARRIVAL_P_BOTTOM`, `ARRIVAL_P_TOP`, `ARRIVAL_NLEV` | 1000, 200, 17 hPa (every 50 hPa) |
+| `CLIM_WINDOW` | `centered`: analogue rule, year +/-4 clamped to 1940-2025 -> 2017..2025 for 2022 |
+
+Then simply:
 ```bash
-chmod +x *.sh
-./submit_all.sh 2026-04-25 2026-06-01 2026-05-10 2026-06-01
-#               DATA_START  DATA_END  TRAJ_START  TRAJ_END
+./submit_all.sh
 ```
-`DATA_*` must cover `[TRAJ_START − 15 days, TRAJ_END]` (15-day back trajectories).
+The ERA5 period is derived: `TRAJ_START - 15 days .. TRAJ_END` (here 2022-06-28 .. 07-24).
+`./submit_all.sh 2022-07-15 2022-07-20` overrides just the arrival days.
 
 ## Run the 30 best analogues
 
@@ -121,9 +132,9 @@ while read RANK DATA_START DATA_END TRAJ_START TRAJ_END; do
 done < ranks.txt
 ```
 (`config.sh` derives all subpaths from `RUN_NAME`, so exporting it per rank
-keeps each analogue isolated. The climatology year auto-selection in stage 02 is
-unchanged — it uses the analogue's own base year, or the previous 9 if the base
-year is incomplete.)
+keeps each analogue isolated. With the default `CLIM_WINDOW=centered` every
+analogue gets its own centred 9-year climatology (year +/-4, clamped to
+1940-2025), as in the Levante analogue pipeline.)
 
 ## Optional vertical restriction — `LEVELS`
 
@@ -132,7 +143,7 @@ notebooks). Setting e.g. `LEVELS="70/137"` keeps the lowest 68 levels
 (~250 hPa → surface), ~50% less 3D data and a matching regrid speed-up.
 
 **Caveat for this study:** `create_startf` seeds trajectories on
-`@profile(1000,200,17)` — up to **200 hPa**, above level 70 (~250 hPa) — and
+`@profile(ARRIVAL_P_BOTTOM,ARRIVAL_P_TOP,ARRIVAL_NLEV)` (default 1000,200,17) — up to **200 hPa**, above level 70 (~250 hPa) — and
 15-day back trajectories often ascend into the UTLS. `70/137` would clip the
 200 hPa starts and any air above ~250 hPa. Enable a level cut only after
 confirming your trajectories stay below the chosen top (and raise the top, e.g.

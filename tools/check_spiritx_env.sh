@@ -3,9 +3,9 @@
 # Read-only sanity check of the spiritx environment for the LAGRANTO pipeline.
 # Resolves every [CHECK] item in case_studies/*/config.sh. Writes nothing.
 #
-#   bash tools/check_spiritx_env.sh [YYYYMMDD]      (default 20260525)
+#   bash tools/check_spiritx_env.sh [YYYYMMDD]      (default 20220718)
 # ===========================================================================
-DAY="${1:-20260525}"
+DAY="${1:-20220718}"
 CASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../case_studies/June_2026" && pwd)"
 # config.sh would mkdir the output tree; read the few values we need instead
 eval "$(grep -E '^export (ERA5_DIR|LAGRANTO_ROOT|CONDA_ENV)=' "${CASE_DIR}/config.sh")"

@@ -48,9 +48,16 @@ export ARRIVAL_NLEV="${ARRIVAL_NLEV:-17}"
 
 # Climatology (TCLIM, stage 02): years averaged for the 21-day running-mean
 # T climatology at each 6-hourly slot.
-#   ""            -> auto: the event year and the 8 years before it
-#                    (previous 9 if the event year is incomplete)
-#   "1991-2020"   -> a fixed range;   "2014 2016 2018" -> an explicit list
+#   CLIM_WINDOW=centered -> analogue rule (as in the Levante analogue pipeline):
+#                           event year +/- 4 (CLIM_NYEARS=9), shifted to stay inside
+#                           CLIM_FIRST_YEAR..CLIM_LAST_YEAR. 2022 -> 2017..2025.
+#   CLIM_WINDOW=trailing -> old event rule: event year and the 8 before it.
+#   CLIM_YEARS="1991-2020" or "2014 2016 2018" -> exactly these years (overrides).
+# NB /proju ERA5 starts in 1979 (Levante: 1940); stage 02 stops if a year is missing.
+export CLIM_WINDOW="${CLIM_WINDOW:-centered}"
+export CLIM_NYEARS="${CLIM_NYEARS:-9}"
+export CLIM_FIRST_YEAR="${CLIM_FIRST_YEAR:-1940}"
+export CLIM_LAST_YEAR="${CLIM_LAST_YEAR:-2025}"
 export CLIM_YEARS="${CLIM_YEARS:-}"
 # =============================================================================
 

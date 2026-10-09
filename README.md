@@ -19,5 +19,5 @@ LAGRANTO itself is not in this repo; it is compiled on spiritx at
 git clone <this repo> && cd lagranto_run
 bash tools/check_spiritx_env.sh          # then fix the [CHECK] items in config.sh
 cd case_studies/June_2026
-./submit_all.sh 2026-04-25 2026-06-01 2026-05-10 2026-06-01
+./submit_all.sh                          # event set in the EVENT block of config.sh
 ```

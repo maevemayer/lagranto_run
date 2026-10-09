@@ -128,14 +128,29 @@ def parse_clim_years(spec):
     return [int(y) for y in spec.split()]
 
 
-def choose_climatology_years(base_start, base_end, var_num=130, ml="ml"):
-    """CLIM_YEARS (config.sh) if set; else UNCHANGED auto rule: the base year
-    and the 8 before it, or the previous 9 if the base year is incomplete."""
-    clim_years = os.environ.get("CLIM_YEARS", "").strip()
-    if clim_years:
-        years = parse_clim_years(clim_years)
-        print(f"Climatology years from CLIM_YEARS: {years[0]}..{years[-1]} ({len(years)} years)", flush=True)
-        return years
+def climatology_years_for_analogue(analogue_year, n_years=9, first_year=1940, last_year=2025):
+    """Verbatim from the Levante analogue pipeline (02_t_clim_slurm_6h.py):
+    centered n-year window, clamped to the ERA5 range."""
+    if n_years % 2 == 0:
+        raise ValueError("The climatology window must contain an odd number of years")
+    half = n_years // 2
+    start_year = analogue_year - half
+    end_year = analogue_year + half
+    if start_year < first_year:
+        start_year = first_year
+        end_year = first_year + n_years - 1
+    elif end_year > last_year:
+        end_year = last_year
+        start_year = last_year - n_years + 1
+    years = list(range(start_year, end_year + 1))
+    if len(years) != n_years or analogue_year not in years:
+        raise RuntimeError(f"Invalid climatology years for {analogue_year}: {years}")
+    return years
+
+
+def trailing_climatology_years(base_start, base_end, var_num=130, ml="ml"):
+    """Old event rule: the base year and the 8 before it, or the previous 9
+    if the base year is (the current year and) incomplete."""
     current_year = pd.Timestamp.today().year
     extended_range = pd.date_range(base_start - pd.Timedelta(days=11),
                                    base_end + pd.Timedelta(days=11), freq="D")
@@ -145,6 +160,49 @@ def choose_climatology_years(base_start, base_end, var_num=130, ml="ml"):
               f"Using {base_start.year-1}..{base_start.year-9}.", flush=True)
         return [base_start.year - i for i in range(1, 10)]
     return [base_start.year - i for i in range(0, 9)]
+
+
+def choose_climatology_years(base_start, base_end, var_num=130, ml="ml"):
+    """Climatology years, from config.sh:
+      CLIM_YEARS set           -> exactly those years
+      CLIM_WINDOW=centered     -> analogue rule: year +/- CLIM_NYEARS//2, clamped
+                                  to CLIM_FIRST_YEAR..CLIM_LAST_YEAR  [default]
+      CLIM_WINDOW=trailing     -> old event rule (year and the 8 before)
+    Then checks that ERA5 input exists for every year, so a gap fails loudly
+    instead of silently averaging fewer years."""
+    env = os.environ
+    if env.get("CLIM_YEARS", "").strip():
+        years = parse_clim_years(env["CLIM_YEARS"])
+        how = "CLIM_YEARS"
+    elif env.get("CLIM_WINDOW", "centered") == "trailing":
+        years = sorted(trailing_climatology_years(base_start, base_end, var_num, ml))
+        how = "trailing window"
+    else:
+        years = climatology_years_for_analogue(
+            base_start.year, n_years=int(env.get("CLIM_NYEARS", "9")),
+            first_year=int(env.get("CLIM_FIRST_YEAR", "1940")),
+            last_year=int(env.get("CLIM_LAST_YEAR", "2025")))
+        how = "centered window (analogue rule)"
+    print(f"Climatology years ({how}): {years}", flush=True)
+
+    window = pd.date_range(base_start - pd.Timedelta(days=11),
+                           base_end + pd.Timedelta(days=11), freq="D")
+    gaps = {}
+    for y in years:
+        n = 0
+        for d in window:
+            try:
+                dy = d.replace(year=y + (d.year - base_start.year))
+            except ValueError:          # 29 Feb in a non-leap year
+                continue
+            n += not os.path.exists(era5_file(dy.year, dy.month, dy.day))
+        if n:
+            gaps[y] = n
+    if gaps:
+        raise SystemExit(f"ERA5 input missing for climatology years {gaps} "
+                         f"(days missing per year, {window[0].date()}..{window[-1].date()} "
+                         f"in {os.environ['ERA5_DIR']})")
+    return years
 
 
 def compute_all_years_split(base_start, base_end, var="t", var_num=130, n_jobs=8):
