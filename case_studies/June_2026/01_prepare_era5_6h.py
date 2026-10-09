@@ -22,7 +22,7 @@ import xarray as xr
 from joblib import Parallel, delayed
 
 # ------------------------------------------------------------------ config ---
-from era5_input import regrid_daily     # spiritx reader (all fields in one daily GRIB)
+from era5_input import regrid_daily, FILE_TAG   # spiritx reader (all fields in one daily GRIB)
 
 SCRATCH   = os.path.join(os.environ["SCRATCH_BASE"], "prepare")
 FINAL     = os.environ["DATA_DIR"]
@@ -36,8 +36,8 @@ SLOT_HOURS = [int(h) for h in os.environ.get("HOURS_CSV", "0,6,12,18").split(","
 
 # ------------------------------------------------------- daily regridding ----
 def process_era5_daily(year, month, day, var):
-    """Regrid one day of `var` to 0.5 deg, hours 00/06/12/18 only (see era5_input)."""
-    regrid_file = regrid_daily(year, month, day, var, SCRATCH, "0.5deg_6h")
+    """Regrid one day of `var` (REMAP_GRID), hours 00/06/12/18 only (see era5_input)."""
+    regrid_file = regrid_daily(year, month, day, var, SCRATCH, FILE_TAG)
     if regrid_file:
         print(f"Processed {var}: {regrid_file}", flush=True)
     return regrid_file
@@ -80,8 +80,8 @@ def compute_pressure_and_dp(sp_file, t_file, output_dir, date_str):
 
     os.makedirs(f"{output_dir}/p", exist_ok=True)
     os.makedirs(f"{output_dir}/dp", exist_ok=True)
-    p_file = os.path.join(output_dir, f"p/p_{date_str}_0.5deg_6h.nc")
-    dp_file = os.path.join(output_dir, f"dp/dp_{date_str}_0.5deg_6h.nc")
+    p_file = os.path.join(output_dir, f"p/p_{date_str}_{FILE_TAG}.nc")
+    dp_file = os.path.join(output_dir, f"dp/dp_{date_str}_{FILE_TAG}.nc")
     p.to_dataset().to_netcdf(p_file)
     dp.to_dataset().to_netcdf(dp_file)
     return (p_file, dp_file)
@@ -102,9 +102,9 @@ def merge_and_split_daily_vars(date_str, var_list=None, input_dir=None, output_d
 
     datasets = []
     for var in var_list:
-        file_path = os.path.join(input_dir, var, f"{var}_{date_str}_0.5deg_6h.nc") \
+        file_path = os.path.join(input_dir, var, f"{var}_{date_str}_{FILE_TAG}.nc") \
             if var in ("p", "dp") else \
-            os.path.join(input_dir, f"{var}_{date_str}_0.5deg_6h.nc")
+            os.path.join(input_dir, f"{var}_{date_str}_{FILE_TAG}.nc")
         if os.path.exists(file_path):
             datasets.append(xr.open_dataset(file_path))
         else:
@@ -166,8 +166,8 @@ def cleanup_day(date, date_str):
     """CLEANUP_INTERMEDIATES=1: drop the day's regridded fields and p/dp once
     all its P-files exist and were built from all 7 inputs (else keep them,
     so a rerun can resume)."""
-    inputs = [os.path.join(SCRATCH, f"{v}_{date_str}_0.5deg_6h.nc") for v in era5_vars] + \
-             [os.path.join(SCRATCH, v, f"{v}_{date_str}_0.5deg_6h.nc") for v in ("p", "dp")]
+    inputs = [os.path.join(SCRATCH, f"{v}_{date_str}_{FILE_TAG}.nc") for v in era5_vars] + \
+             [os.path.join(SCRATCH, v, f"{v}_{date_str}_{FILE_TAG}.nc") for v in ("p", "dp")]
     p_files = [os.path.join(FINAL, f"P{date:%Y%m%d}_{h:02d}") for h in SLOT_HOURS]
     if not all(os.path.exists(f) for f in inputs + p_files):
         print(f"[cleanup] {date_str}: P-files or inputs incomplete - keeping intermediates", flush=True)

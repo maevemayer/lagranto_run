@@ -26,7 +26,7 @@ import xarray as xr
 from cdo import Cdo
 from joblib import Parallel, delayed
 
-from era5_input import era5_file, regrid_daily   # spiritx reader (all fields in one daily GRIB)
+from era5_input import era5_file, regrid_daily, FILE_TAG   # spiritx reader (all fields in one daily GRIB)
 
 SCRATCH_BASE = os.path.join(os.environ["SCRATCH_BASE"], "t_clim")
 dump_path = os.path.join(SCRATCH_BASE, "tbar_dump")
@@ -49,7 +49,7 @@ def process_era5_daily(year, month, day, var_num, var, ml="ml"):
     var_num/ml are kept for call compatibility; spiritx has a single ERA5 pool
     for every year, so there is no ET/E5 choice any more.
     """
-    return regrid_daily(year, month, day, var, dump_path, "0.5deg_6h")
+    return regrid_daily(year, month, day, var, dump_path, FILE_TAG)
 
 
 def process_extended_period(start_date, end_date, var_num=130, var="t", n_jobs=8):
@@ -220,7 +220,7 @@ def compute_all_years_split(base_start, base_end, var="t", var_num=130, n_jobs=8
             print(f"All running-mean files for {year} already exist. Skipping.", flush=True)
             continue
 
-        for f in glob.glob(os.path.join(dump_path, f"{var}_{year}-*_0.5deg_6h.nc")):
+        for f in glob.glob(os.path.join(dump_path, f"{var}_{year}-*_{FILE_TAG}.nc")):
             os.remove(f)
 
         daily_files = process_extended_period(start, end, var_num, var, n_jobs=n_jobs)
@@ -228,7 +228,7 @@ def compute_all_years_split(base_start, base_end, var="t", var_num=130, n_jobs=8
         Parallel(n_jobs=n_jobs, verbose=10)(
             delayed(split_into_6hourly_files)(
                 df, var,
-                date_str=os.path.basename(df).split(f"{var}_")[1].split("_0.5deg_6h.nc")[0]
+                date_str=os.path.basename(df).split(f"{var}_")[1].split(f"_{FILE_TAG}.nc")[0]
             ) for df in daily_files
         )
         print(f"Computing 21-day running means for {len(date_range)} days...", flush=True)

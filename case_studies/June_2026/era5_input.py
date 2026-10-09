@@ -27,6 +27,9 @@ ERA5_FILE_PATTERN = os.environ.get("ERA5_FILE_PATTERN",
 HOURS_CSV = os.environ.get("HOURS_CSV", "0,6,12,18")
 LEVELS = os.environ.get("LEVELS", "").strip()
 REMAP = os.environ.get("REMAP_GRID", "r720x360")
+# file-name tag of the intermediate files: the grid they are on
+GRID_TAG = "native" if REMAP.lower() in ("", "none", "native") else REMAP
+FILE_TAG = f"{GRID_TAG}_6h"                 # e.g. t_2022-07-18_native_6h.nc
 LATBOX = os.environ.get("DOMAIN_LATBOX", "0,360,0,90").strip()   # NH cut from the start
 
 # pipeline variable -> GRIB shortName in the daily file
