@@ -73,7 +73,7 @@ def regrid_daily(year, month, day, var, out_dir, tag):
     Same chain as the DKRZ notebooks (setgridtype -> sp2gp -> remapbil) except:
       * -selname picks the field out of the all-variable daily file,
       * -selhour is applied first (fewer timesteps through the transforms),
-      * -sellevel is inserted when LEVELS is set (3-D vars only),
+      * -sellevidx is inserted when LEVELS is set (3-D vars only),
       * NO timselmean afterwards.
     Returns the output path, or None if the day's input file is missing.
     """
@@ -96,7 +96,7 @@ def regrid_daily(year, month, day, var, out_dir, tag):
     #         then convert reduced->regular Gaussian and GRIB->netCDF.
     sel = f"-selhour,{HOURS_CSV} {_select(var, var_file)}"
     if LEVELS and var != "sp":
-        sel = f"-sellevel,{LEVELS} {sel}"
+        sel = f"-sellevidx,{LEVELS} {sel}"     # model levels by index, e.g. 18/137
     # --reduce_dim drops the size-1 level axis of sp derived from lnsp
     cdo.setgridtype("regular", input=f"{sel} {var_file}",
                     output=reg_file, options=f"-f nc {CDO_GRIB_OPTS} --reduce_dim")

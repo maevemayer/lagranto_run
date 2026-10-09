@@ -141,19 +141,25 @@ keeps each analogue isolated. With the default `CLIM_WINDOW=centered` every
 analogue gets its own centred 9-year climatology (year +/-4, clamped to
 1940-2025), as in the Levante analogue pipeline.)
 
-## Optional vertical restriction — `LEVELS`
+## Model levels — `LEVELS` (default `18/137`)
 
-`config.sh` has `LEVELS=""` (all 137 model levels → math identical to the
-notebooks). Setting e.g. `LEVELS="70/137"` keeps the lowest 68 levels
-(~250 hPa → surface), ~50% less 3D data and a matching regrid speed-up.
+The spiritx LAGRANTO `trace` segfaults when the P/S files have more than about
+120 model levels (tested on 1-deg ERA5: 98, 100, 101, 110, 120 run; 128, 130,
+136, 137 crash; `caltra` is fine). The cause is somewhere in the LAGRANTO build,
+not in our files. `config.sh` therefore keeps model levels **18-137** (120
+levels, model top ~1 hPa) via `cdo -sellevidx` in stages 01 and 02:
 
-**Caveat for this study:** `create_startf` seeds trajectories on
-`@profile(ARRIVAL_P_BOTTOM,ARRIVAL_P_TOP,ARRIVAL_NLEV)` (default 1000,200,17) — up to **200 hPa**, above level 70 (~250 hPa) — and
-15-day back trajectories often ascend into the UTLS. `70/137` would clip the
-200 hPa starts and any air above ~250 hPa. Enable a level cut only after
-confirming your trajectories stay below the chosen top (and raise the top, e.g.
-~level 55–60 ≈ 150–170 hPa, if not). When `LEVELS` is set it is applied to the
-4-D fields only; the p/dp interface-coefficient handling should be validated.
+* Levels 1-17 lie far above the 200 hPa top start level and anything 15-day
+  trajectories reach; LAGRANTO interpolates between neighbouring levels only,
+  so trajectories and traced fields are identical to a 137-level run.
+* ~12% less 3-D data in every stage.
+* `p`/`dp` take the coefficients of the levels actually kept (hyam[k], interfaces
+  k-1/k); with all levels this reproduces the notebook math bit-for-bit (tested).
+* `submit_all.sh` refuses `LEVELS` that keep more than 120 levels.
+
+Do **not** use a low top like `70/137` (~250 hPa): it would clip the 200 hPa
+starts (`@profile(ARRIVAL_P_BOTTOM,ARRIVAL_P_TOP,ARRIVAL_NLEV)`, default
+1000,200,17) and air that ascends into the UTLS.
 
 ## Rough cost (Levante numbers; spiritx not yet measured)
 

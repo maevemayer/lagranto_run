@@ -44,6 +44,16 @@ if ! grep -Eq '^[[:space:]]*set[[:space:]]+interval[[:space:]]*=[[:space:]]*"?6"
     echo "set  set interval = \"6\"  in ${LAGRANTO_ROOT}/goodies/datelist.sh first"; exit 1
 fi
 
+# LAGRANTO trace on spiritx segfaults with more than ~120 model levels
+# (tested: 120 ok, 128 crash) -> refuse anything above 120
+if [[ -z "${LEVELS}" ]]; then NLEV=137
+elif [[ "${LEVELS}" =~ ^([0-9]+)/([0-9]+)$ ]]; then NLEV=$(( BASH_REMATCH[2] - BASH_REMATCH[1] + 1 ))
+else NLEV=$(tr ',' '\n' <<< "${LEVELS}" | grep -c .)
+fi
+if (( NLEV > 120 )); then
+    echo "LEVELS='${LEVELS}' keeps ${NLEV} levels; trace crashes above 120 (use e.g. 18/137)"; exit 1
+fi
+
 # climatology base period = data period +/- 1 day (for the +/-6 h neighbours)
 BASE_START="$(date -d "${DATA_START} -1 day" +%Y-%m-%d)"
 BASE_END="$(date -d "${DATA_END} +1 day" +%Y-%m-%d)"

@@ -17,6 +17,7 @@ Paths, HOURS, LEVELS, grid come from the environment (source config.sh first).
 """
 import os
 import sys
+import numpy as np
 import pandas as pd
 import xarray as xr
 from joblib import Parallel, delayed
@@ -48,8 +49,13 @@ def process_era5_daily(year, month, day, var):
 def compute_pressure_and_dp(sp_file, t_file, output_dir, date_str):
     """Same math as the notebook (hybrid p and dp from T-file coefficients).
 
-    Only change: the coefficient dimensions are looked up instead of being
-    hard-coded as nhym/nhyi (cdo 2.2.2 on Levante), so any cdo version works.
+    Changes: the coefficient dimensions are looked up instead of being
+    hard-coded as nhym/nhyi (cdo 2.2.2 on Levante), so any cdo version works;
+    and the levels actually present in the T file are used. With LEVELS
+    (e.g. 18/137) cdo keeps all 137/138 coefficients, so model level k
+    (1-based, the lev value) takes hyam[k], and its thickness is the
+    difference of interfaces k and k-1. With all levels this is exactly
+    the original p = hyam + hybm*sp, dp = p_half[1:] - p_half[:-1].
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -65,14 +71,24 @@ def compute_pressure_and_dp(sp_file, t_file, output_dir, date_str):
     # positional differences below: drop any coordinate labels on these dims
     coef = ds_t[["hyam", "hybm", "hyai", "hybi"]].drop_vars([mid_dim, half_dim], errors="ignore")
 
-    hyam = coef["hyam"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
-    hybm = coef["hybm"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
-    hyai = coef["hyai"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
-    hybi = coef["hybi"].expand_dims({"time": sp.time, "lat": sp.lat, "lon": sp.lon})
+    lev = ds_t["lev"].values
+    k = lev.astype(int) - 1                       # 0-based model level index
+    nmid = coef.sizes[mid_dim]
+    if not (np.allclose(lev, k + 1) and k.min() >= 0 and k.max() < nmid
+            and coef.sizes[half_dim] == nmid + 1):
+        raise ValueError(f"{t_file}: lev {lev[0]}..{lev[-1]} are not model level numbers "
+                         f"1..{nmid} matching hyam/hyai")
+
+    e = {"time": sp.time, "lat": sp.lat, "lon": sp.lon}
+    hyam = coef["hyam"].isel({mid_dim: k}).expand_dims(e)
+    hybm = coef["hybm"].isel({mid_dim: k}).expand_dims(e)
+    hyai_top = coef["hyai"].isel({half_dim: k}).expand_dims(e)       # interface above level k
+    hybi_top = coef["hybi"].isel({half_dim: k}).expand_dims(e)
+    hyai_bot = coef["hyai"].isel({half_dim: k + 1}).expand_dims(e)   # interface below level k
+    hybi_bot = coef["hybi"].isel({half_dim: k + 1}).expand_dims(e)
 
     p = hyam + hybm * sp
-    p_half = hyai + hybi * sp
-    dp = p_half.isel({half_dim: slice(1, None)}) - p_half.isel({half_dim: slice(None, -1)})
+    dp = (hyai_bot + hybi_bot * sp) - (hyai_top + hybi_top * sp)
 
     p = p.rename({mid_dim: "lev"}) if mid_dim != "lev" else p
     dp = dp.rename({half_dim: "lev"})

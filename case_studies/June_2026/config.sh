@@ -133,12 +133,14 @@ export HOURS_CSV="0,6,12,18"              # cdo -selhour argument
 export SLOTS="00 06 12 18"               # human-readable slot labels
 export STEPS_PER_DAY=4
 
-# ---- Optional vertical restriction (see README) ----
-#   empty  -> keep ALL model levels (math identical to notebooks) [DEFAULT]
-#   "70/137" -> lowest 68 levels (~250 hPa -> surface); WILL clip 200 hPa
-#               trajectory starts and any air above ~250 hPa. Enable only
-#               after confirming your trajectories stay below that top.
-export LEVELS=""
+# ---- Model levels kept (cdo -sellevidx, see README) ----
+#   "18/137" -> 120 levels, model top ~1 hPa [DEFAULT on spiritx]. The spiritx
+#               LAGRANTO trace segfaults with more than ~120 levels (120 ok,
+#               128 crash); levels 1-17 lie far above any trajectory, so results
+#               below are identical to a 137-level run, with ~12% less data.
+#   ""       -> all 137 levels (crashes trace on spiritx).
+#   "70/137" -> lowest 68 levels (~250 hPa): would clip the 200 hPa starts.
+export LEVELS="${LEVELS:-18/137}"
 
 # ---- Grid of the P/S files ----
 #   "none"     -> keep the input grid: the /proju ERA5 is 1 deg (360x181), so
