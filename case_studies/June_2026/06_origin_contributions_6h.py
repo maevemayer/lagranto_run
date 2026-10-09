@@ -15,7 +15,8 @@ From the per-arrival lagrangian_terms_*.nc written by stage 05
     TA genesis when it never flips -> it coincides with, or lies downstream of,
     the total-TA genesis.
 
-Output: $NC_RESULTS_DIR/origin_contributions.nc  (dims: time, traj_id)
+Output: $NC_RESULTS_DIR/origin_contributions.nc  (dims: time, traj_id),
+        copied to $RESULTS_DIR on /homedata (not purged like /scratchx)
 
 Usage:
     python 06_origin_contributions_6h.py [N_JOBS]     # N_JOBS accepted for
@@ -23,6 +24,7 @@ Usage:
 """
 import os
 import glob
+import shutil
 import sys
 
 import numpy as np
@@ -32,6 +34,7 @@ import xarray as xr
 NC_RESULTS_DIR = os.environ["NC_RESULTS_DIR"]
 IN_DIR = os.path.join(NC_RESULTS_DIR, "traj_netcdfs")
 OUT_FILE = os.path.join(NC_RESULTS_DIR, "origin_contributions.nc")
+KEEP_DIR = os.environ["RESULTS_DIR"]        # /homedata copy of the final result
 DELTA_T = 6 * 3600.0
 PROCS = ["advection", "adiabatic", "diabatic", "seasonal"]
 
@@ -109,6 +112,9 @@ def main():
     pooled = xr.concat(parts, dim="time", join="outer")
     pooled.to_netcdf(OUT_FILE)
     print(f"[06] saved -> {OUT_FILE} | dims {dict(pooled.sizes)} | {len(pooled.data_vars)} vars")
+    os.makedirs(KEEP_DIR, exist_ok=True)
+    kept = shutil.copy2(OUT_FILE, KEEP_DIR)
+    print(f"[06] copied -> {kept}")
 
 
 if __name__ == "__main__":

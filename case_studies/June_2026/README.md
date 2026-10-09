@@ -76,7 +76,7 @@ timestamps.
 
 /homedata/$USER/lagranto_run/                 WORK_ROOT - logs + ASCII trajectories
 ├── slurm_logs/                      %x-%j.out of every job
-└── <RUN_NAME>/results_6h/           trajectory_* (LAGRANTO output), logs/
+└── <RUN_NAME>/results_6h/           trajectory_* (LAGRANTO output), logs/, origin_contributions.nc (copy)
 ```
 
 **Intermediates** (`tmp/prepare/`, `tmp/t_clim/bar_intermediate/`,
@@ -84,9 +84,9 @@ timestamps.
 (`CLEANUP_INTERMEDIATES=1`, the default). Set it to `0` to keep them for
 debugging. A rerun of stage 02 skips straight through if all `tbar/` files exist.
 
-**/scratchx may be purged.** Copy `origin_contributions.nc` (and whatever
-else you need to keep) to `/homedata` once a run is done; the trajectories on
-`/homedata` are enough to rebuild stages 05/06.
+**/scratchx may be purged.** Stage 06 therefore copies `origin_contributions.nc`
+to `/homedata/$USER/lagranto_run/<RUN_NAME>/results_6h/` automatically; the
+trajectories there are enough to rebuild stages 05/06.
 
 Submitting single stages by hand with `sbatch` also logs there (the `#SBATCH
 --output` headers point at `/homedata/%u/lagranto_run/slurm_logs/`), but the
