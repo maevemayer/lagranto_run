@@ -44,6 +44,14 @@ if ! grep -Eq '^[[:space:]]*set[[:space:]]+interval[[:space:]]*=[[:space:]]*"?6"
     echo "set  set interval = \"6\"  in ${LAGRANTO_ROOT}/goodies/datelist.sh first"; exit 1
 fi
 
+# trace.f90 is compiled with a fixed maximum number of model levels
+# (nlevmax=100 in the distributed source -> segfault on 137-level ERA5)
+NLEVMAX="$(grep -oiE 'nlevmax *= *[0-9]+' "${LAGRANTO_ROOT}/trace/trace.f90" | grep -oE '[0-9]+' | head -1)"
+if [[ -n "${NLEVMAX}" && "${NLEVMAX}" -lt 137 && -z "${LEVELS}" ]]; then
+    echo "${LAGRANTO_ROOT}/trace was built with nlevmax=${NLEVMAX} < 137 levels:"
+    echo "  raise nlevmax in trace/trace.f90 and rebuild (see README)"; exit 1
+fi
+
 # climatology base period = data period +/- 1 day (for the +/-6 h neighbours)
 BASE_START="$(date -d "${DATA_START} -1 day" +%Y-%m-%d)"
 BASE_END="$(date -d "${DATA_END} +1 day" +%Y-%m-%d)"
