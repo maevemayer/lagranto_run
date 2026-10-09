@@ -96,7 +96,7 @@ export DOMAIN_LATBOX="0,360,0,90"
 
 # ---- LAGRANTO ---------------------------------------------------------------
 export LAGRANTO_ROOT="/home/mmayer/code/lagranto.era5.test/lagranto.shellscript"
-# create_startf.param + tracevars.shellscript used by stage 04 (from Levante)
+# tracevars.shellscript used by stage 04 (from Levante)
 export LAGRANTO_PARAM_DIR="${PIPELINE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/lagranto_params"
 # Optional extra library path for the LAGRANTO binaries (netCDF-Fortran), only
 # needed if caltra/trace cannot find libnetcdff inside a Slurm job.

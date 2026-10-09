@@ -49,7 +49,7 @@ pipeline carry them.)
 |---|---|
 | `config.sh` | shared paths / cadence / `LEVELS` knob / conda env (source this) |
 | `era5_input.py` | reads one field out of the spiritx all-variable daily ERA5 GRIB (used by 01, 02) |
-| `lagranto_params/` | `create_startf.param`, `tracevars.shellscript` for stage 04 |
+| `lagranto_params/` | `tracevars.shellscript` for stage 04 (`create_startf.param` is generated per run) |
 | `01_prepare_era5_6h.py` + `.slurm` | ERA5 → P-files |
 | `02_t_climatology_6h.py` + `.slurm` | 9-year T climatology (tbar) |
 | `03_build_s_files_6h.py` + `.slurm` | build S-files (hyam/hybm folded in) |
@@ -71,16 +71,9 @@ P/S-file is ~0.5 GB at 137 levels, so `WORK_ROOT` must be on scratch, not `/home
 
 - Run `bash tools/check_spiritx_env.sh` (repo root) and fix every `[CHECK]` in
   `config.sh` accordingly.
-- Copy the two LAGRANTO param files from Levante into `lagranto_params/`:
-  ```bash
-  scp levante:/work/uc1275/u301827/01_LAGRANTO/2026_May/create_startf.param lagranto_params/
-  scp levante:/work/uc1275/u301827/01_LAGRANTO/tracevars.shellscript lagranto_params/
-  ```
-  The `tracevars` order must give the columns stage 05 reads
-  (`T OMEGA THETA TCLIM DTDP DTDT`).
 - Set `set interval = "6"` in `$LAGRANTO/goodies/datelist.sh` (was `"3"`).
 
-`submit_all.sh` refuses to submit until the last two are done.
+`submit_all.sh` refuses to submit until the datelist interval is 6.
 
 ## Run the ERA5T 2026 event
 
@@ -142,7 +135,7 @@ What changed for spiritx (the physics is untouched):
 | Python/CDO | `module load python3`, spack CDO path | conda env (`CONDA_ENV`), optional `CDO_MODULE` |
 | Slurm | `--account=uc1275 --partition=shared`, up to 84 CPUs | no account, `--partition=zen16` [CHECK], ≤32 CPUs |
 | LAGRANTO | `/work/uc1275/…/lagranto.shellscript`, intel/netcdf modules | `/home/mmayer/code/lagranto.era5.test/lagranto.shellscript`, no modules (`LAGRANTO_LD_LIBRARY_PATH` if needed) |
-| param files | copied from fixed `/work` paths | versioned in `lagranto_params/` |
+| param files | copied from fixed `/work` paths (incl. a stale `create_startf.param` that create_startf.sh overwrites anyway) | `tracevars.shellscript` versioned in `lagranto_params/` |
 | stage 04 logs | discarded (`/dev/null`) | `results_6h/logs/lagranto_<YYYYMMDD_HH>.log`; failed start times are listed and fail the job |
 
 ### Open questions about the `/proju` input

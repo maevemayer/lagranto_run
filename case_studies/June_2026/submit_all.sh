@@ -28,11 +28,9 @@ source "${HERE}/config.sh"
 SB=(sbatch --parsable --partition="${SLURM_PARTITION}")
 
 # ---- pre-flight: fail now rather than after hours in the queue ----
-for f in create_startf.param tracevars.shellscript; do
-    if [[ ! -s "${LAGRANTO_PARAM_DIR}/${f}" ]]; then
-        echo "missing ${LAGRANTO_PARAM_DIR}/${f} (copy it from Levante, see README)"; exit 1
-    fi
-done
+if [[ ! -s "${LAGRANTO_PARAM_DIR}/tracevars.shellscript" ]]; then
+    echo "missing ${LAGRANTO_PARAM_DIR}/tracevars.shellscript"; exit 1
+fi
 if ! grep -Eq '^[[:space:]]*set[[:space:]]+interval[[:space:]]*=[[:space:]]*"?6"?' \
         "${LAGRANTO_ROOT}/goodies/datelist.sh"; then
     echo "set  set interval = \"6\"  in ${LAGRANTO_ROOT}/goodies/datelist.sh first"; exit 1

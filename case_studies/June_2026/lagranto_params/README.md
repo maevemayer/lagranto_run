@@ -1,11 +1,17 @@
 # LAGRANTO parameter files for stage 04
 
-Stage 04 copies these into each run directory. They are not here yet: copy them
-from Levante (the paths the old `04_run_parallel.csh` used):
+`tracevars.shellscript` (from Levante) is copied into each run directory. Its
+order and scale factors are what stage 05 reads and undoes:
 
-```bash
-scp levante:/work/uc1275/u301827/01_LAGRANTO/2026_May/create_startf.param .
-scp levante:/work/uc1275/u301827/01_LAGRANTO/tracevars.shellscript .
-```
+| var | factor | file | stage 05 |
+|---|---|---|---|
+| T | 1 | P | |
+| OMEGA | 100 | P | `/100` |
+| THETA | 1 | S | |
+| TCLIM | 1 | S | |
+| DTDP | 1000 | S | `/1e3` |
+| DTDT | 1000000 | S | `/1e6` |
 
-`submit_all.sh` refuses to submit while either file is missing.
+Change one and you must change `05_traj_postprocess_6h.py` with it.
+
+`create_startf.param` is not needed: `create_startf.sh` writes it on every call.

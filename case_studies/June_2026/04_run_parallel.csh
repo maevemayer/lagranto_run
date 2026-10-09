@@ -2,7 +2,7 @@
 # ===========================================================================
 # Stage 04 - single-datetime LAGRANTO backward run (15 days).
 # Adapted from 05_run_parallel-7.sh. Math/trajectory setup UNCHANGED.
-# All paths (data, results, LAGRANTO, param files) come from config.sh.
+# All paths (data, results, LAGRANTO, tracevars) come from config.sh.
 #
 # REMINDER: set  set interval = "6"  in
 #   $LAGRANTO/goodies/datelist.sh   (was "3")
@@ -23,8 +23,8 @@ set results_dir = ${RESULTS_DIR}
 set tmpdir = ${source_dir}/tmp/tmp_$datetime
 mkdir -p $tmpdir
 
-# param files + LAGRANTO path come from config.sh (via 04_run_lagranto.slurm)
-\cp ${LAGRANTO_PARAM_DIR}/create_startf.param $tmpdir/
+# tracevars + LAGRANTO path come from config.sh (via 04_run_lagranto.slurm);
+# create_startf.param is written by create_startf.sh itself on every call
 \cp ${LAGRANTO_PARAM_DIR}/tracevars.shellscript $tmpdir/
 cd $tmpdir
 
