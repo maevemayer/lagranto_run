@@ -79,6 +79,11 @@ timestamps.
 └── <RUN_NAME>/results_6h/           trajectory_* (LAGRANTO output), logs/
 ```
 
+**Intermediates** (`tmp/prepare/`, `tmp/t_clim/bar_intermediate/`,
+`data/tmp/tmp_*`) are deleted once the stage that used them has succeeded
+(`CLEANUP_INTERMEDIATES=1`, the default). Set it to `0` to keep them for
+debugging. A rerun of stage 02 skips straight through if all `tbar/` files exist.
+
 **/scratchx may be purged.** Copy `origin_contributions.nc` (and whatever
 else you need to keep) to `/homedata` once a run is done; the trajectories on
 `/homedata` are enough to rebuild stages 05/06.

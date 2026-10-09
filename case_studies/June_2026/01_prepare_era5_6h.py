@@ -30,6 +30,8 @@ os.makedirs(SCRATCH, exist_ok=True)
 os.makedirs(FINAL, exist_ok=True)
 
 era5_vars = ["sp", "t", "u", "v", "w"]
+CLEANUP = os.environ.get("CLEANUP_INTERMEDIATES", "0") == "1"
+SLOT_HOURS = [int(h) for h in os.environ.get("HOURS_CSV", "0,6,12,18").split(",")]
 
 
 # ------------------------------------------------------- daily regridding ----
@@ -155,6 +157,24 @@ def process_one_day(date):
         print("Skipping p/dp computation (missing t or sp).", flush=True)
 
     merge_and_split_daily_vars(date_str, input_dir=SCRATCH, output_dir=FINAL)
+
+    if CLEANUP:
+        cleanup_day(date, date_str)
+
+
+def cleanup_day(date, date_str):
+    """CLEANUP_INTERMEDIATES=1: drop the day's regridded fields and p/dp once
+    all its P-files exist and were built from all 7 inputs (else keep them,
+    so a rerun can resume)."""
+    inputs = [os.path.join(SCRATCH, f"{v}_{date_str}_0.5deg_6h.nc") for v in era5_vars] + \
+             [os.path.join(SCRATCH, v, f"{v}_{date_str}_0.5deg_6h.nc") for v in ("p", "dp")]
+    p_files = [os.path.join(FINAL, f"P{date:%Y%m%d}_{h:02d}") for h in SLOT_HOURS]
+    if not all(os.path.exists(f) for f in inputs + p_files):
+        print(f"[cleanup] {date_str}: P-files or inputs incomplete - keeping intermediates", flush=True)
+        return
+    for f in inputs:
+        os.remove(f)
+    print(f"[cleanup] {date_str}: removed {len(inputs)} intermediate files", flush=True)
 
 
 def main():

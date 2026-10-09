@@ -65,4 +65,14 @@ if ($status != 0) exit 1
 
 mkdir -p $results_dir
 mv -f $traj_file $results_dir/
+if ($status != 0) exit 1
+
+# CLEANUP_INTERMEDIATES=1: drop this run folder (symlinks + start/param files)
+# now that the trajectory is safely in $results_dir; failed runs keep theirs
+if ($?CLEANUP_INTERMEDIATES) then
+    if ("$CLEANUP_INTERMEDIATES" == "1") then
+        cd ${source_dir}
+        \rm -rf $tmpdir
+    endif
+endif
 exit 0

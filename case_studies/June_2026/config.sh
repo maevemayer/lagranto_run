@@ -120,6 +120,12 @@ export TBAR_DIR="${NC_BASE}/tbar"         # final T climatology (tbar) files
 export NC_RESULTS_DIR="${NC_BASE}/results_6h"   # traj_netcdfs/, origin_contributions.nc
 export RESULTS_DIR="${BASE_OUT}/results_6h"     # trajectory_* (ASCII), logs/
 export SLURM_LOG_DIR="${WORK_ROOT}/slurm_logs"  # same dir as the #SBATCH --output headers
+# Delete intermediates once the stage that used them has succeeded:
+#   01 -> tmp/prepare/ day files, 02 -> tmp/t_clim/bar_intermediate/ running
+#   means, 04 -> data/tmp/tmp_<YYYYMMDD_HH>/ run folders. Each stage checks its
+#   own outputs first; anything from a failed day/start time is kept.
+#   0 keeps everything (debugging; a rerun then skips work already done).
+export CLEANUP_INTERMEDIATES="${CLEANUP_INTERMEDIATES:-1}"
 mkdir -p "${DATA_DIR}" "${TBAR_DIR}" "${NC_RESULTS_DIR}" "${RESULTS_DIR}" "${SCRATCH_BASE}" "${SLURM_LOG_DIR}"
 
 # ---- The 6-hourly cadence ----

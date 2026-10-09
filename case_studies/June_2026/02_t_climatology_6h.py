@@ -276,6 +276,30 @@ def compute_final_climatology_parallel(base_start, base_end, climatology_years, 
     )
 
 
+def cleanup_running_means(base_start, base_end, climatology_years, var="t"):
+    """CLEANUP_INTERMEDIATES=1: once every final tbar file of the base period
+    exists, drop the per-year 21-day running means it was averaged from."""
+    date_range = pd.date_range(base_start, base_end, freq="D")
+    finals = [os.path.join(final_path, f"{var}_{d.strftime('%Y-%m-%d')}_6h{s}_tbar.nc")
+              for d in date_range for s in SLOTS]
+    missing = [f for f in finals if not os.path.exists(f)]
+    if missing:
+        print(f"[cleanup] {len(missing)} tbar files missing - keeping running means", flush=True)
+        return
+    n = 0
+    for d in date_range:
+        for year in climatology_years:
+            try:
+                dy = d.replace(year=year)
+            except ValueError:
+                continue
+            for s in SLOTS:
+                f = os.path.join(intermediate_path, f"{var}_{dy.strftime('%Y-%m-%d')}_6h{s}_mean.nc")
+                if os.path.exists(f):
+                    os.remove(f); n += 1
+    print(f"[cleanup] removed {n} running-mean files from {intermediate_path}", flush=True)
+
+
 def main():
     global base_period_start, base_period_end
     if len(sys.argv) < 3:
@@ -284,10 +308,20 @@ def main():
     base_period_end = pd.Timestamp(sys.argv[2])
     n_jobs = int(sys.argv[3]) if len(sys.argv) > 3 else 28
 
+    # rerun after a successful run (whose running means may have been cleaned
+    # up): nothing to do if every final tbar file already exists
+    finals = [os.path.join(final_path, f"t_{d.strftime('%Y-%m-%d')}_6h{s}_tbar.nc")
+              for d in pd.date_range(base_period_start, base_period_end, freq="D") for s in SLOTS]
+    if all(os.path.exists(f) for f in finals):
+        print(f"All {len(finals)} tbar files already exist in {final_path} - nothing to do.", flush=True)
+        return
+
     years = compute_all_years_split(base_period_start, base_period_end,
                                     var="t", var_num=130, n_jobs=n_jobs)
     compute_final_climatology_parallel(base_period_start, base_period_end,
                                        years, var="t", n_jobs=n_jobs)
+    if os.environ.get("CLEANUP_INTERMEDIATES", "0") == "1":
+        cleanup_running_means(base_period_start, base_period_end, years, var="t")
 
 
 if __name__ == "__main__":
