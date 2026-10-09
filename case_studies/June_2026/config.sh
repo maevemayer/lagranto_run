@@ -38,6 +38,7 @@ if [[ "${_cfg_flags}" == *u* ]]; then set -u; fi
 if [[ -n "${CDO_BIN_DIR}" ]]; then export PATH="${CDO_BIN_DIR}:${PATH}"; fi
 PYTHON="$(command -v python3 || command -v python)"
 export PYTHON
+export PYTHONDONTWRITEBYTECODE=1        # no __pycache__ in the code tree
 
 # ---- Slurm ------------------------------------------------------------------
 # No account on spiritx. The partition is also hard-coded in the #SBATCH
@@ -59,14 +60,17 @@ export ERA5_NAME_W="w"            # omega (param 135). See README if only etadot
 export ERA5_NAME_SP="sp"
 
 # ---- Output tree ------------------------------------------------------------
-# P/S files are ~0.5 GB each at 137 levels: keep this off /home.
-export WORK_ROOT="${WORK_ROOT:-/scratchx/${USER}/lagranto}"    # [CHECK]
+# $HOME holds code only. EVERYTHING the pipeline writes - P/S files, tbar,
+# trajectories, temp files, Slurm logs - goes under WORK_ROOT on /homedata.
+# (P/S files are ~0.5 GB each at 137 levels.)
+export WORK_ROOT="${WORK_ROOT:-/homedata/${USER}/lagranto_run}"
 export BASE_OUT="${BASE_OUT:-${WORK_ROOT}/2026_May/corrected_6h}"
 export SCRATCH_BASE="${SCRATCH_BASE:-${WORK_ROOT}/tmp/2026_MAY_6h}"
 export DATA_DIR="${BASE_OUT}/data"        # P- and S-files land here
 export TBAR_DIR="${BASE_OUT}/tbar"        # final T climatology (tbar) files
 export RESULTS_DIR="${BASE_OUT}/results_6h"
-mkdir -p "${DATA_DIR}" "${TBAR_DIR}" "${RESULTS_DIR}" "${SCRATCH_BASE}"
+export SLURM_LOG_DIR="${WORK_ROOT}/slurm_logs"   # same dir as the #SBATCH --output headers
+mkdir -p "${DATA_DIR}" "${TBAR_DIR}" "${RESULTS_DIR}" "${SCRATCH_BASE}" "${SLURM_LOG_DIR}"
 
 # ---- The 6-hourly cadence ----
 export HOURS_CSV="0,6,12,18"              # cdo -selhour argument

@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
 #SBATCH --time=12:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=/homedata/%u/lagranto_run/slurm_logs/%x-%j.out
 # ---------------------------------------------------------------------------
 # Stage 02: 9-year T climatology (tbar), 6-hourly.
 # BASE_START/END should extend +/-1 day beyond the S-file period (stage 03

@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=01:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=/homedata/%u/lagranto_run/slurm_logs/%x-%j.out
 # ---------------------------------------------------------------------------
 # Stage 06: origin contributions (TA + per-process genesis + exact arrival)
 # for the ERA5T 2026 event, from results_6h/traj_netcdfs/lagrangian_terms_*.nc.

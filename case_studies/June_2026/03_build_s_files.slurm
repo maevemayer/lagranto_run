@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=128G
 #SBATCH --time=02:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=/homedata/%u/lagranto_run/slurm_logs/%x-%j.out
 # ---------------------------------------------------------------------------
 # Stage 03: build S-files, then append hyam/hybm (stage 04).
 # Submit:  sbatch --export=ALL,START=2026-05-15,END=2026-06-01 03_build_s_files.slurm

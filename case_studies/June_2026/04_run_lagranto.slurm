@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=/homedata/%u/lagranto_run/slurm_logs/%x-%j.out
 # ---------------------------------------------------------------------------
 # Stage 05: LAGRANTO 15-day backward trajectories for every 6-hourly start.
 # PREREQUISITE (one-time, manual): set  set interval = "6"  in

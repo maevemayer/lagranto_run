@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=48G
 #SBATCH --time=02:00:00
-#SBATCH --output=%x-%j.out
+#SBATCH --output=/homedata/%u/lagranto_run/slurm_logs/%x-%j.out
 # ---------------------------------------------------------------------------
 # Stage 05: trajectory process decomposition (advection/adiabatic/diabatic/
 # seasonal) for the ERA5T 2026 event, from the results_6h/ trajectories.

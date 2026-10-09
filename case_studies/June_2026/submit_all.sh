@@ -25,7 +25,11 @@ fi
 DATA_START="$1"; DATA_END="$2"; TRAJ_START="$3"; TRAJ_END="$4"
 
 source "${HERE}/config.sh"
-SB=(sbatch --parsable --partition="${SLURM_PARTITION}")
+# Slurm logs to /homedata too (the #SBATCH --output default would drop them
+# into the code directory you submit from); --chdir keeps any stray relative
+# write out of $HOME as well
+SB=(sbatch --parsable --partition="${SLURM_PARTITION}"
+    --output="${SLURM_LOG_DIR}/%x-%j.out" --chdir="${SLURM_LOG_DIR}")
 
 # ---- pre-flight: fail now rather than after hours in the queue ----
 if [[ ! -s "${LAGRANTO_PARAM_DIR}/tracevars.shellscript" ]]; then

@@ -64,8 +64,22 @@ in xarray (no second NCO pass, no `module load nco`) — and the `04_02` rename 
 obsolete because the 6-hourly snapshots already carry their true 00/06/12/18
 timestamps.
 
-Outputs go to `$WORK_ROOT/2026_May/corrected_6h/` (see `config.sh`). Each
-P/S-file is ~0.5 GB at 137 levels, so `WORK_ROOT` must be on scratch, not `/home`.
+**`$HOME` holds code only.** Everything the pipeline writes goes under
+`WORK_ROOT=/homedata/$USER/lagranto_run` (see `config.sh`):
+
+```
+/homedata/$USER/lagranto_run/
+├── slurm_logs/                      %x-%j.out of every job
+├── tmp/2026_MAY_6h/                 regridding scratch (stages 01, 02)
+└── 2026_May/corrected_6h/
+    ├── data/                        P- and S-files (~0.5 GB each), LAGRANTO run dirs in data/tmp/
+    ├── tbar/                        T climatology
+    └── results_6h/                  trajectories, logs/, traj_netcdfs/, origin_contributions.nc
+```
+
+Submitting single stages by hand with `sbatch` also logs there (the `#SBATCH
+--output` headers point at `/homedata/%u/lagranto_run/slurm_logs/`), but the
+directory has to exist: `source config.sh` once creates it.
 
 ## Prerequisites (one-time, manual)
 
@@ -135,6 +149,7 @@ What changed for spiritx (the physics is untouched):
 | Python/CDO | `module load python3`, spack CDO path | conda env (`CONDA_ENV`), optional `CDO_MODULE` |
 | Slurm | `--account=uc1275 --partition=shared`, up to 84 CPUs | no account, `--partition=zen16` [CHECK], ≤32 CPUs |
 | LAGRANTO | `/work/uc1275/…/lagranto.shellscript`, intel/netcdf modules | `/home/mmayer/code/lagranto.era5.test/lagranto.shellscript`, no modules (`LAGRANTO_LD_LIBRARY_PATH` if needed) |
+| outputs | `/work/uc1275/…`, `/scratch/u/u301827/…`, Slurm logs in the submit dir | all under `/homedata/$USER/lagranto_run/`, nothing in `$HOME` |
 | param files | copied from fixed `/work` paths (incl. a stale `create_startf.param` that create_startf.sh overwrites anyway) | `tracevars.shellscript` versioned in `lagranto_params/` |
 | stage 04 logs | discarded (`/dev/null`) | `results_6h/logs/lagranto_<YYYYMMDD_HH>.log`; failed start times are listed and fail the job |
 
