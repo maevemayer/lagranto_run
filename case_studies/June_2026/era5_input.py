@@ -15,6 +15,7 @@ as on DKRZ for non-spectral fields).
 import os
 from functools import lru_cache
 
+import xarray as xr
 from cdo import Cdo
 
 if os.environ.get("CDO_BIN_DIR"):
@@ -64,7 +65,7 @@ def _select(var, path):
 
 
 def regrid_daily(year, month, day, var, out_dir, tag):
-    """Regrid one day of `var` to 0.5 deg, keeping ONLY hours 00/06/12/18.
+    """Regrid one day of `var` (REMAP_GRID, or native), keeping ONLY hours 00/06/12/18.
 
     Same chain as the DKRZ notebooks (setgridtype -> sp2gp -> remapbil) except:
       * -selname picks the field out of the all-variable daily file,
@@ -105,12 +106,23 @@ def regrid_daily(year, month, day, var, out_dir, tag):
         print(f"sp2gp failed or not needed for {var}: {e}", flush=True)
         input_for_remap = reg_file
 
-    # Step 3: bilinear remap to 0.5 deg, then cut to the domain box (default NH).
-    #         Done in one chained call so nothing outside the box is ever written.
-    if LATBOX:
-        cdo.sellonlatbox(LATBOX, input=f"-remapbil,{REMAP} {input_for_remap}", output=regrid_file)
+    # Step 3: bilinear remap to REMAP_GRID - or, with REMAP_GRID=none, keep the
+    #         native grid and only put latitudes south->north (the order the
+    #         remap produced on Levante and LAGRANTO is known to read) - then
+    #         cut to the domain box (default NH), all in one chained call so
+    #         nothing outside the box is ever written.
+    if REMAP.lower() in ("", "none", "native"):
+        with xr.open_dataset(input_for_remap) as ds:
+            lat = ds["lat"].values
+        grid_op = "-invertlat" if lat[0] > lat[-1] else ""
     else:
-        cdo.remapbil(REMAP, input=input_for_remap, output=regrid_file)
+        grid_op = f"-remapbil,{REMAP}"
+    if LATBOX:
+        cdo.sellonlatbox(LATBOX, input=f"{grid_op} {input_for_remap}", output=regrid_file)
+    elif grid_op:
+        cdo.copy(input=f"{grid_op} {input_for_remap}", output=regrid_file)
+    else:
+        cdo.copy(input=input_for_remap, output=regrid_file)
 
     for f in (reg_file, gp_file):
         if os.path.exists(f):

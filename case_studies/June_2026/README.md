@@ -166,6 +166,7 @@ What changed for spiritx (the physics is untouched):
 | | Levante | spiritx |
 |---|---|---|
 | ERA5 input | `/pool/data/ERA5/{ET,E5}/{ml,sf}/an/1H/<code>/…_<code>.grb`, one file per variable, spectral T/U/V | `/proju/flexpart/flexpart_in/ERA5/EN-true/YYYY/ERA5ENYYYYMMDD.grb`, all fields in one daily file; picked with `cdo -selname` (`era5_input.py`) |
+| grid | native ~0.28° ERA5 → bilinear 0.5° (`r720x360`) | `/proju` ERA5 is 1° (360×181, w + lnsp, 3-hourly); P/S files kept at native 1° (`REMAP_GRID=none`, latitudes flipped south→north), start points still on the 0.5° arrival grid |
 | ET/E5 choice | stage 02 used ET for the current year | single pool for all years |
 | surface pressure | `sp` (134) | `sp`, or `exp(lnsp)` if `sp` is absent |
 | Python/CDO | `module load python3`, spack CDO 2.2.2 | `thesis` conda env from `environment.yml` on `/homedata` (any CDO; also colindex2 + analysis stack) |

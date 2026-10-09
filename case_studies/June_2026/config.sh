@@ -134,8 +134,13 @@ export STEPS_PER_DAY=4
 #               after confirming your trajectories stay below that top.
 export LEVELS=""
 
-# ---- ERA5 remap target grid ----
-export REMAP_GRID="r720x360"             # 0.5 deg global (unchanged)
+# ---- Grid of the P/S files ----
+#   "none"     -> keep the input grid: the /proju ERA5 is 1 deg (360x181), so
+#                 P/S files are 1 deg; latitudes are flipped to south->north
+#                 (no interpolation). [DEFAULT on spiritx]
+#   "r720x360" -> bilinear to 0.5 deg as on Levante (4x the size; from 1 deg
+#                 input this adds no real resolution).
+export REMAP_GRID="${REMAP_GRID:-none}"
 
 # ---- Domain cut (applied right after remap, in stages 01 & 02) ----
 #   ERA5 is cut to this lon,lat box the moment it is regridded, so every
