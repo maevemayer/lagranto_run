@@ -23,6 +23,7 @@ from joblib import Parallel, delayed
 
 # ------------------------------------------------------------------ config ---
 from era5_input import regrid_daily, FILE_TAG   # spiritx reader (all fields in one daily GRIB)
+from lagranto_io import write_lagranto_netcdf
 
 SCRATCH   = os.path.join(os.environ["SCRATCH_BASE"], "prepare")
 FINAL     = os.environ["DATA_DIR"]
@@ -130,7 +131,7 @@ def merge_and_split_daily_vars(date_str, var_list=None, input_dir=None, output_d
         time_str = time_value.strftime("P%Y%m%d_%H")
         single = single.expand_dims(time=[merged.time.isel(time=t_idx).values])
         out_file = os.path.join(output_dir, time_str)
-        single.to_netcdf(out_file)
+        write_lagranto_netcdf(single, out_file)      # LAGRANTO-readable layout
         single.close()
         print(f"Saved {out_file}", flush=True)
 

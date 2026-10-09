@@ -19,6 +19,7 @@ import sys
 import pandas as pd
 import xarray as xr
 from joblib import Parallel, delayed
+from lagranto_io import write_lagranto_netcdf
 
 clim_dir   = os.environ["TBAR_DIR"]           # tbar files from stage 02
 p_files    = os.environ["DATA_DIR"]           # P-files from stage 01
@@ -136,7 +137,7 @@ def save_compiled_dataset(dt, hh, output_dir):
     ds.DTDT.attrs["long_name"] = "Time derivative of T_clim"; ds.DTDT.attrs["units"] = "K s-1"
 
     out_file = f"{output_dir}/S{dt}_{hh}"
-    ds.to_netcdf(out_file)
+    write_lagranto_netcdf(ds, out_file)              # LAGRANTO-readable layout
     print(f"Saved {out_file}", flush=True)
     return 0
 
