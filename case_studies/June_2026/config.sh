@@ -17,6 +17,43 @@
 # before the first submission.
 # ===========================================================================
 
+# ===================== EVENT - edit this block per run =======================
+# Every value can also be overridden from the shell (export X=... before
+# ./submit_all.sh), e.g. in a loop over analogues.
+
+# Run name: sub-path for this run under /scratchx and /homedata
+export RUN_NAME="${RUN_NAME:-2022_July/corrected_6h}"
+
+# Arrival (trajectory start) days, inclusive: every 00/06/12/18 UTC from
+# TRAJ_START 00 UTC to TRAJ_END 18 UTC. ERA5 is prepared automatically from
+# TRAJ_START - 15 days (15-day back-trajectories) to TRAJ_END.
+export TRAJ_START="${TRAJ_START:-2022-07-13}"
+export TRAJ_END="${TRAJ_END:-2022-07-24}"
+
+# Arrival region: a regular lon/lat grid of start points (degrees; longitudes
+# in -180..180 so boxes across 0E work, e.g. -5.5 .. 5.0).
+export ARRIVAL_LON_MIN="${ARRIVAL_LON_MIN:--5.5}"
+export ARRIVAL_LON_MAX="${ARRIVAL_LON_MAX:-5.0}"
+export ARRIVAL_LAT_MIN="${ARRIVAL_LAT_MIN:-44.5}"
+export ARRIVAL_LAT_MAX="${ARRIVAL_LAT_MAX:-55.0}"
+export ARRIVAL_DLON="${ARRIVAL_DLON:-0.5}"
+export ARRIVAL_DLAT="${ARRIVAL_DLAT:-0.5}"
+
+# Arrival pressure levels: ARRIVAL_NLEV levels evenly spaced from
+# ARRIVAL_P_BOTTOM up to ARRIVAL_P_TOP (hPa) at every start point
+# (LAGRANTO @profile(bottom,top,n)). 1000,200,17 -> every 50 hPa.
+export ARRIVAL_P_BOTTOM="${ARRIVAL_P_BOTTOM:-1000}"
+export ARRIVAL_P_TOP="${ARRIVAL_P_TOP:-200}"
+export ARRIVAL_NLEV="${ARRIVAL_NLEV:-17}"
+
+# Climatology (TCLIM, stage 02): years averaged for the 21-day running-mean
+# T climatology at each 6-hourly slot.
+#   ""            -> auto: the event year and the 8 years before it
+#                    (previous 9 if the event year is incomplete)
+#   "1991-2020"   -> a fixed range;   "2014 2016 2018" -> an explicit list
+export CLIM_YEARS="${CLIM_YEARS:-}"
+# =============================================================================
+
 # ---- Python / CDO environment ----------------------------------------------
 # Slurm jobs are non-interactive shells, so the conda env is activated
 # explicitly. The env needs: python-cdo, xarray, netCDF4, pandas, joblib
@@ -65,10 +102,9 @@ export ERA5_NAME_SP="sp"
 #                           regridding temp files, traj_netcdfs/,
 #                           origin_contributions.nc, LAGRANTO run dirs
 #   WORK_ROOT (/homedata) : Slurm logs, ASCII trajectory_* files, stage 04 logs
-# RUN_NAME is the sub-path for one run under both roots; set it per analogue.
+# RUN_NAME (EVENT block above) is the sub-path for one run under both roots.
 export NC_ROOT="${NC_ROOT:-/scratchx/${USER}/lagranto_run}"
 export WORK_ROOT="${WORK_ROOT:-/homedata/${USER}/lagranto_run}"
-export RUN_NAME="${RUN_NAME:-2026_May/corrected_6h}"
 export NC_BASE="${NC_ROOT}/${RUN_NAME}"
 export BASE_OUT="${WORK_ROOT}/${RUN_NAME}"
 export SCRATCH_BASE="${NC_BASE}/tmp"      # regridding scratch (stages 01, 02)

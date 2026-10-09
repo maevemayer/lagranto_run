@@ -49,21 +49,12 @@ end
 set start_file = "${datetime}_startf.2"
 set lonlat_file = "start_lonlat_${datetime}.txt"
 
-cat >! make_lonlat.py << EOF
-import sys
-lons = [354.5 + 0.5*i for i in range(11)] + [0.0 + 0.5*i for i in range(11)]
-lats = [44.5 + 0.5*i for i in range(22)]
-with open(sys.argv[1], "w") as f:
-    for lat in lats:
-        for lon in lons:
-            f.write("{:.1f} {:.1f}\n".format(lon, lat))
-EOF
-
-${PYTHON} make_lonlat.py "$lonlat_file"
+# arrival box + levels from the EVENT block of config.sh
+${PYTHON} ${PIPELINE_DIR}/make_start_points.py "$lonlat_file"
 if ($status != 0) exit 1
 
 ${LAGRANTO}/create_startf/create_startf.sh $datetime $start_file \
-"file(${lonlat_file}) @profile(1000,200,17) @hPa" -changet
+"file(${lonlat_file}) @profile(${ARRIVAL_P_BOTTOM},${ARRIVAL_P_TOP},${ARRIVAL_NLEV}) @hPa" -changet
 if ($status != 0) exit 1
 
 set traj_file = "trajectory_${datetime}"

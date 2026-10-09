@@ -26,7 +26,8 @@ def run_hour(dt):
     # one log per start time (was /dev/null) - needed to debug a new machine
     with open(os.path.join(LOG_DIR, f"lagranto_{datetime_str}.log"), "w") as log:
         rc = subprocess.run(["csh", SHELL_SCRIPT, datetime_str],
-                            cwd=WORKING_DIR, stdout=log, stderr=subprocess.STDOUT).returncode
+                            cwd=WORKING_DIR, stdout=log, stderr=subprocess.STDOUT,
+                            env={**os.environ, "PIPELINE_DIR": HERE}).returncode
     return datetime_str, rc
 
 
@@ -45,9 +46,10 @@ def main():
             datetimes.append(current.replace(hour=h))
         current += timedelta(days=1)
 
-    # first/last trimmed (as in the notebook) so neighbours exist for tracing
+    # all start times START 00 UTC .. END 18 UTC (the notebook dropped the first
+    # and last; not needed since the data period starts 15 days before START)
     results = Parallel(n_jobs=n_jobs, verbose=10)(
-        delayed(run_hour)(dt) for dt in datetimes[1:-1]
+        delayed(run_hour)(dt) for dt in datetimes
     )
     # one bad start time no longer kills the others; fail the job at the end
     # so the afterok chain (stage 05) does not start on a partial set

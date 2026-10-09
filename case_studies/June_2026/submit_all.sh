@@ -6,25 +6,29 @@
 #                       >-- both --> 03 S-files --> 04 LAGRANTO --> 05 decomp --> 06 origin
 #   02 T climatology (tbar)   /
 #
-# DATA_START/DATA_END : period for which P/S files are built. Must cover
-#                       [TRAJ_START - 15 days , TRAJ_END] (15-day back traj).
-# TRAJ_START/TRAJ_END : the 6-hourly trajectory start times (stage 04).
+# Dates, run name, arrival box and levels come from the EVENT block of config.sh.
+# The ERA5 period for the P/S files is derived from them:
+#   DATA_START = TRAJ_START - 15 days (15-day back-trajectories), DATA_END = TRAJ_END
 #
 # Usage:
-#   ./submit_all.sh DATA_START DATA_END TRAJ_START TRAJ_END
-# Example (ERA5T 2026 event, starts 2026-05-10..06-01, 15 d back => data from 2026-04-25):
-#   ./submit_all.sh 2026-04-25 2026-06-01 2026-05-10 2026-06-01
+#   ./submit_all.sh                          # everything from config.sh
+#   ./submit_all.sh TRAJ_START TRAJ_END      # override the arrival days
+#   ./submit_all.sh DATA_START DATA_END TRAJ_START TRAJ_END   # old explicit form
 # ===========================================================================
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PIPELINE_DIR="${HERE}"   # stage scripts locate config.sh / *.py via this
 
-if [[ $# -ne 4 ]]; then
-    echo "usage: $0 DATA_START DATA_END TRAJ_START TRAJ_END"; exit 1
-fi
-DATA_START="$1"; DATA_END="$2"; TRAJ_START="$3"; TRAJ_END="$4"
+case $# in
+    0) ;;
+    2) export TRAJ_START="$1" TRAJ_END="$2" ;;
+    4) DATA_START="$1"; DATA_END="$2"; export TRAJ_START="$3" TRAJ_END="$4" ;;
+    *) echo "usage: $0 [TRAJ_START TRAJ_END] | DATA_START DATA_END TRAJ_START TRAJ_END"; exit 1 ;;
+esac
 
 source "${HERE}/config.sh"
+DATA_START="${DATA_START:-$(date -d "${TRAJ_START} -15 day" +%Y-%m-%d)}"
+DATA_END="${DATA_END:-${TRAJ_END}}"
 # Slurm logs to /homedata too (the #SBATCH --output default would drop them
 # into the code directory you submit from); --chdir keeps any stray relative
 # write out of $HOME as well
@@ -46,7 +50,10 @@ BASE_END="$(date -d "${DATA_END} +1 day" +%Y-%m-%d)"
 
 echo "P/S data period : ${DATA_START} .. ${DATA_END}"
 echo "climatology     : ${BASE_START} .. ${BASE_END}"
-echo "trajectory runs : ${TRAJ_START} .. ${TRAJ_END}"
+echo "trajectory runs : ${TRAJ_START} 00 UTC .. ${TRAJ_END} 18 UTC (6-hourly)"
+echo "arrival box     : ${ARRIVAL_LON_MIN}..${ARRIVAL_LON_MAX}E x ${ARRIVAL_LAT_MIN}..${ARRIVAL_LAT_MAX}N" \
+     "(${ARRIVAL_DLON} x ${ARRIVAL_DLAT} deg), ${ARRIVAL_NLEV} levels ${ARRIVAL_P_BOTTOM}..${ARRIVAL_P_TOP} hPa"
+echo "output          : ${NC_BASE}  +  ${BASE_OUT}"
 
 j01=$("${SB[@]}" --export=ALL,START="${DATA_START}",END="${DATA_END}" \
       "${HERE}/01_prepare_era5.slurm")

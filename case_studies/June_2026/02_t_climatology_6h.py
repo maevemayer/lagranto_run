@@ -119,8 +119,23 @@ def era5_file_exists_for_date(d, var_num=130, ml="ml"):
     return os.path.exists(era5_file(d.year, d.month, d.day))
 
 
+def parse_clim_years(spec):
+    """CLIM_YEARS from config.sh: "1991-2020" (range) or "2014 2016 2018" (list)."""
+    spec = spec.replace(",", " ").strip()
+    if "-" in spec:
+        y0, y1 = (int(x) for x in spec.split("-"))
+        return list(range(y0, y1 + 1))
+    return [int(y) for y in spec.split()]
+
+
 def choose_climatology_years(base_start, base_end, var_num=130, ml="ml"):
-    """UNCHANGED: use the base year unless incomplete, else previous 9 years."""
+    """CLIM_YEARS (config.sh) if set; else UNCHANGED auto rule: the base year
+    and the 8 before it, or the previous 9 if the base year is incomplete."""
+    clim_years = os.environ.get("CLIM_YEARS", "").strip()
+    if clim_years:
+        years = parse_clim_years(clim_years)
+        print(f"Climatology years from CLIM_YEARS: {years[0]}..{years[-1]} ({len(years)} years)", flush=True)
+        return years
     current_year = pd.Timestamp.today().year
     extended_range = pd.date_range(base_start - pd.Timedelta(days=11),
                                    base_end + pd.Timedelta(days=11), freq="D")
