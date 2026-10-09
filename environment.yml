@@ -8,7 +8,8 @@
 #   python -m ipykernel install --user --name thesis --display-name "thesis (spiritx)"
 #
 # Left out on purpose: torch + CUDA (analogues-2026, pip), cuda-cudart (thesis):
-# spiritx compute nodes have no GPU. Everything else from phd (py3.7, xarray
+# spiritx compute nodes have no GPU. basemap (phd): deprecated, superseded by
+# cartopy, unused in the scripts, and it slows the solve by pinning old numpy/mpl. Everything else from phd (py3.7, xarray
 # 0.17) is superseded by newer versions here.
 name: thesis
 channels:
@@ -48,7 +49,6 @@ dependencies:
   - esmpy
   - metpy
   - cartopy
-  - basemap
   - geopandas
   - shapely
   - pyogrio
