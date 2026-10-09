@@ -2,7 +2,7 @@
 """Stage 06 - origin contributions for the ERA5T 2026 event.
 
 From the per-arrival lagrangian_terms_*.nc written by stage 05
-($RESULTS_DIR/traj_netcdfs/), build ONE origin-contribution file matching the IFS
+($NC_RESULTS_DIR/traj_netcdfs/), build ONE origin-contribution file matching the IFS
 `tanom` idea but richer. Per trajectory it stores:
 
   * exact ARRIVAL point : lon0, lat0, p0 (arrival_p)
@@ -15,11 +15,11 @@ From the per-arrival lagrangian_terms_*.nc written by stage 05
     TA genesis when it never flips -> it coincides with, or lies downstream of,
     the total-TA genesis.
 
-Output: $RESULTS_DIR/origin_contributions.nc  (dims: time, traj_id)
+Output: $NC_RESULTS_DIR/origin_contributions.nc  (dims: time, traj_id)
 
 Usage:
     python 06_origin_contributions_6h.py [N_JOBS]     # N_JOBS accepted for
-    (source config.sh first so RESULTS_DIR is set)    # symmetry; build is serial
+    (source config.sh first so NC_RESULTS_DIR is set) # symmetry; build is serial
 """
 import os
 import glob
@@ -29,9 +29,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-RESULTS_DIR = os.environ["RESULTS_DIR"]
-IN_DIR = os.path.join(RESULTS_DIR, "traj_netcdfs")
-OUT_FILE = os.path.join(RESULTS_DIR, "origin_contributions.nc")
+NC_RESULTS_DIR = os.environ["NC_RESULTS_DIR"]
+IN_DIR = os.path.join(NC_RESULTS_DIR, "traj_netcdfs")
+OUT_FILE = os.path.join(NC_RESULTS_DIR, "origin_contributions.nc")
 DELTA_T = 6 * 3600.0
 PROCS = ["advection", "adiabatic", "diabatic", "seasonal"]
 

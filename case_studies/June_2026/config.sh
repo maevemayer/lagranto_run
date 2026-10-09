@@ -60,17 +60,24 @@ export ERA5_NAME_W="w"            # omega (param 135). See README if only etadot
 export ERA5_NAME_SP="sp"
 
 # ---- Output tree ------------------------------------------------------------
-# $HOME holds code only. EVERYTHING the pipeline writes - P/S files, tbar,
-# trajectories, temp files, Slurm logs - goes under WORK_ROOT on /homedata.
-# (P/S files are ~0.5 GB each at 137 levels.)
+# $HOME holds code only. The pipeline writes to two roots:
+#   NC_ROOT   (/scratchx) : every netCDF - P/S files (~0.5 GB each), tbar,
+#                           regridding temp files, traj_netcdfs/,
+#                           origin_contributions.nc, LAGRANTO run dirs
+#   WORK_ROOT (/homedata) : Slurm logs, ASCII trajectory_* files, stage 04 logs
+# RUN_NAME is the sub-path for one run under both roots; set it per analogue.
+export NC_ROOT="${NC_ROOT:-/scratchx/${USER}/lagranto_run}"
 export WORK_ROOT="${WORK_ROOT:-/homedata/${USER}/lagranto_run}"
-export BASE_OUT="${BASE_OUT:-${WORK_ROOT}/2026_May/corrected_6h}"
-export SCRATCH_BASE="${SCRATCH_BASE:-${WORK_ROOT}/tmp/2026_MAY_6h}"
-export DATA_DIR="${BASE_OUT}/data"        # P- and S-files land here
-export TBAR_DIR="${BASE_OUT}/tbar"        # final T climatology (tbar) files
-export RESULTS_DIR="${BASE_OUT}/results_6h"
-export SLURM_LOG_DIR="${WORK_ROOT}/slurm_logs"   # same dir as the #SBATCH --output headers
-mkdir -p "${DATA_DIR}" "${TBAR_DIR}" "${RESULTS_DIR}" "${SCRATCH_BASE}" "${SLURM_LOG_DIR}"
+export RUN_NAME="${RUN_NAME:-2026_May/corrected_6h}"
+export NC_BASE="${NC_ROOT}/${RUN_NAME}"
+export BASE_OUT="${WORK_ROOT}/${RUN_NAME}"
+export SCRATCH_BASE="${NC_BASE}/tmp"      # regridding scratch (stages 01, 02)
+export DATA_DIR="${NC_BASE}/data"         # P- and S-files land here
+export TBAR_DIR="${NC_BASE}/tbar"         # final T climatology (tbar) files
+export NC_RESULTS_DIR="${NC_BASE}/results_6h"   # traj_netcdfs/, origin_contributions.nc
+export RESULTS_DIR="${BASE_OUT}/results_6h"     # trajectory_* (ASCII), logs/
+export SLURM_LOG_DIR="${WORK_ROOT}/slurm_logs"  # same dir as the #SBATCH --output headers
+mkdir -p "${DATA_DIR}" "${TBAR_DIR}" "${NC_RESULTS_DIR}" "${RESULTS_DIR}" "${SCRATCH_BASE}" "${SLURM_LOG_DIR}"
 
 # ---- The 6-hourly cadence ----
 export HOURS_CSV="0,6,12,18"              # cdo -selhour argument

@@ -32,8 +32,8 @@ hr "cdo binary (Levante used 2.2.2)"
 which cdo && cdo --version 2>&1 | head -2
 command -v module >/dev/null && module -t avail cdo 2>&1 | head
 
-hr "storage: WORK_ROOT is /homedata/$USER/lagranto_run"
-for d in /homedata/$USER; do
+hr "storage: NC_ROOT on /scratchx, WORK_ROOT on /homedata"
+for d in /scratchx/$USER /homedata/$USER; do
     [[ -d $d ]] && df -h "$d" | tail -1 | awk -v d="$d" '{printf "  %-24s free %s of %s\n", d, $4, $2}'
 done
 

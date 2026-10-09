@@ -7,13 +7,13 @@ decomposition math is changed - only the I/O is wired to the event's
 results_6h/ folder (from config.sh), and every trajectory found there is
 processed in parallel.
 
-For each trajectory_<YYYYMMDD>_<HH> in $RESULTS_DIR it writes
+For each trajectory_<YYYYMMDD>_<HH> in $RESULTS_DIR (/homedata) it writes
 lagrangian_terms_, integrated_terms_ and cumulative_terms_ NetCDFs into
-$RESULTS_DIR/traj_netcdfs/.
+$NC_RESULTS_DIR/traj_netcdfs/ (/scratchx).
 
 Usage:
     python 05_traj_postprocess_6h.py [N_JOBS]
-    (source config.sh first so RESULTS_DIR is set)
+    (source config.sh first so RESULTS_DIR / NC_RESULTS_DIR are set)
 """
 import os
 import re
@@ -25,7 +25,7 @@ import xarray as xr
 from joblib import Parallel, delayed
 
 RESULTS_DIR = os.environ["RESULTS_DIR"]
-OUT_DIR = os.path.join(RESULTS_DIR, "traj_netcdfs")
+OUT_DIR = os.path.join(os.environ["NC_RESULTS_DIR"], "traj_netcdfs")
 DELTA_T = 3600.0 * 6                                # 6-hourly (unchanged from nb)
 
 

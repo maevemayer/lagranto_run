@@ -9,7 +9,7 @@
 # ---------------------------------------------------------------------------
 # Stage 06: origin contributions (TA + per-process genesis + exact arrival)
 # for the ERA5T 2026 event, from results_6h/traj_netcdfs/lagrangian_terms_*.nc.
-# Writes results_6h/origin_contributions.nc.
+# Writes $NC_RESULTS_DIR/origin_contributions.nc (on /scratchx).
 # Submit:  sbatch 06_origin_contributions.slurm
 # ---------------------------------------------------------------------------
 set -euo pipefail
