@@ -6,29 +6,27 @@
 #   conda activate /homedata/$USER/conda/thesis
 #   python -m ipykernel install --user --name thesis --display-name "thesis (spiritx)"
 #
-# Versions are PINNED to the Levante envs that worked, so the solver only has to
-# check one combination (unpinned + numpy 1.26 made libmamba backtrack for >25 min):
-#   * conda packages shared with / from analogues-2026 (colindex2 env, numpy 1.26)
-#     -> its exact versions (pandas/xarray/cftime/shapely at the versions pip
-#        had settled on there)
-#   * packages only in the thesis env -> the thesis versions
-#   * packages that were pip-installed on Levante -> pip again, same versions
+# Versions: the core is pinned to the exact versions of the Levante analogues-2026
+# env (a combination known to install together, numpy 1.26). Packages only in the
+# thesis env get minimum versions: their old exact builds need older C libraries
+# (netCDF 4.9.2, older PROJ) and cannot coexist with the 2026 core. pip packages
+# keep their Levante versions.
 # Left out: torch + CUDA (no GPUs on spiritx), basemap (cartopy is used instead),
 # the py3.7 phd env (superseded).
 name: thesis
 channels:
   - conda-forge
 dependencies:
-  # --- core (analogues-2026)
+  # --- core: exact versions of analogues-2026 (known to coexist)
   - python=3.10
   - numpy=1.26.4
   - scipy=1.15.2
-  - pandas=2.2.3
-  - xarray=2025.1.2
+  - pandas=2.3.3
+  - xarray=2025.6.1
   - dask=2026.3.0
   - netcdf4=1.7.4
   - h5netcdf=1.8.1
-  - cftime=1.6.4
+  - cftime=1.6.5
   - bottleneck=1.6.0
   - numba=0.65.1
   - joblib=1.5.3
@@ -36,7 +34,7 @@ dependencies:
   - statsmodels=0.14.6
   - matplotlib=3.10.9
   - cartopy=0.25.0
-  - shapely=2.0.7
+  - shapely=2.1.2
   - cdo=2.5.0                 # any version works for the pipeline; this one ran on Levante
   - python-cdo=1.6.1
   - eccodes=2.46.0
@@ -48,17 +46,17 @@ dependencies:
   - eigen=5.0.1
   - pybind11=3.0.3
   - cxx-compiler=1.11.0
-  # --- only in the thesis env
-  - tqdm=4.67.1
-  - scikit-image=0.25.2
-  - pygrib=2.1.6
-  - ecmwf-api-client=1.6.5
-  - xesmf=0.8.8
-  - esmpy=8.7.0
-  - metpy=1.7.0
-  - seaborn=0.13.2
-  - cmocean=4.0.3
-  - pycoare=2023.10b1
+  # --- only in the thesis env: minimum versions, builds must fit the core libraries
+  - tqdm>=4.67
+  - scikit-image>=0.25
+  - pygrib>=2.1.6
+  - ecmwf-api-client>=1.6.5
+  - xesmf>=0.8.8
+  - esmpy>=8.7
+  - metpy>=1.7
+  - seaborn>=0.13.2
+  - cmocean>=4.0.3
+  - pycoare
   - nco                       # NCO binaries (ncks, ...) for the nco python wrapper
   # --- pip-installed on Levante: same route, same versions
   - pip:
