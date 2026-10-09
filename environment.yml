@@ -1,81 +1,83 @@
 # One env for everything on spiritx: the LAGRANTO pipeline, colindex2 / analogues,
-# and the thesis analysis + plotting. Merged from the three Levante envs
-# (analogues-2026, thesis, phd). Lives on /homedata so $HOME stays code-only:
+# and the thesis analysis + plotting. Lives on /homedata so $HOME stays code-only:
 #
 #   export CONDA_PKGS_DIRS=/homedata/$USER/conda/pkgs
-#   conda env create -p /homedata/$USER/conda/thesis -f environment.yml
+#   conda env create --solver=libmamba -p /homedata/$USER/conda/thesis -f environment.yml
 #   conda activate /homedata/$USER/conda/thesis
 #   python -m ipykernel install --user --name thesis --display-name "thesis (spiritx)"
 #
-# Left out on purpose: torch + CUDA (analogues-2026, pip), cuda-cudart (thesis):
-# spiritx compute nodes have no GPU. basemap (phd): deprecated, superseded by
-# cartopy, unused in the scripts, and it slows the solve by pinning old numpy/mpl. Everything else from phd (py3.7, xarray
-# 0.17) is superseded by newer versions here.
+# Versions are PINNED to the Levante envs that worked, so the solver only has to
+# check one combination (unpinned + numpy 1.26 made libmamba backtrack for >25 min):
+#   * conda packages shared with / from analogues-2026 (colindex2 env, numpy 1.26)
+#     -> its exact versions (pandas/xarray/cftime/shapely at the versions pip
+#        had settled on there)
+#   * packages only in the thesis env -> the thesis versions
+#   * packages that were pip-installed on Levante -> pip again, same versions
+# Left out: torch + CUDA (no GPUs on spiritx), basemap (cartopy is used instead),
+# the py3.7 phd env (superseded).
 name: thesis
 channels:
   - conda-forge
 dependencies:
+  # --- core (analogues-2026)
   - python=3.10
-  - numpy=1.26                # as pinned in analogues-2026 (colindex2 env)
-  # --- data / numerics
-  - scipy
-  - pandas
-  - xarray
-  - dask
-  - netcdf4
-  - h5netcdf
-  - cftime
-  - bottleneck
-  - numba
-  - joblib
-  - tqdm
-  - scikit-learn
-  - scikit-image
-  - statsmodels
-  # --- GRIB / CDO / NCO / ECMWF + CDS access
-  - cdo                       # any version: stage 01 no longer depends on cdo's dim names
-  - python-cdo
-  - nco
-  - eccodes
-  - cfgrib
-  - pygrib
-  - cdsapi
-  - ecmwf-api-client
-  - copernicusmarine
-  - earthaccess
-  - s3fs
-  # --- geo / regridding
-  - xesmf
-  - esmpy
-  - metpy
-  - cartopy
-  - geopandas
-  - shapely
-  - pyogrio
-  - rasterio
-  - regionmask
-  - gsw
-  # --- plotting
-  - matplotlib
-  - seaborn
-  - cmocean
-  - cmcrameri
-  # --- jupyter
-  - ipykernel
-  - jupyter_client
-  - ipyleaflet
-  # --- build tools (sdfc compiles C++ on pip install)
+  - numpy=1.26.4
+  - scipy=1.15.2
+  - pandas=2.2.3
+  - xarray=2025.1.2
+  - dask=2026.3.0
+  - netcdf4=1.7.4
+  - h5netcdf=1.8.1
+  - cftime=1.6.4
+  - bottleneck=1.6.0
+  - numba=0.65.1
+  - joblib=1.5.3
+  - scikit-learn=1.7.2
+  - statsmodels=0.14.6
+  - matplotlib=3.10.9
+  - cartopy=0.25.0
+  - shapely=2.0.7
+  - cdo=2.5.0                 # any version works for the pipeline; this one ran on Levante
+  - python-cdo=1.6.1
+  - eccodes=2.46.0
+  - ipykernel=7.3.0
+  - jupyter_client=8.9.1
   - pip
   - git
-  - eigen
-  - pybind11
-  - cxx-compiler
+  # build tools: sdfc compiles C++ during its pip install
+  - eigen=5.0.1
+  - pybind11=3.0.3
+  - cxx-compiler=1.11.0
+  # --- only in the thesis env
+  - tqdm=4.67.1
+  - scikit-image=0.25.2
+  - pygrib=2.1.6
+  - ecmwf-api-client=1.6.5
+  - xesmf=0.8.8
+  - esmpy=8.7.0
+  - metpy=1.7.0
+  - seaborn=0.13.2
+  - cmocean=4.0.3
+  - pycoare=2023.10b1
+  - nco                       # NCO binaries (ncks, ...) for the nco python wrapper
+  # --- pip-installed on Levante: same route, same versions
   - pip:
       - colindex2==2.11.0
       - sdfc==0.9.0
       - sklearn-xarray==0.4.0
-      - nco==1.1.0             # python wrapper (the nco binaries come from conda)
-      - cachier
-      - pycoare
-      - nicopal
-      - pqdm
+      - cfgrib==0.9.15.1
+      - cdsapi==0.7.7
+      - geopandas==1.0.1
+      - pyogrio==0.10.0
+      - rasterio==1.4.3
+      - regionmask==0.13.0
+      - gsw==3.6.19
+      - cmcrameri==1.9
+      - ipyleaflet==0.19.2
+      - copernicusmarine==1.3.5
+      - earthaccess==0.14.0
+      - s3fs==2026.4.0
+      - nco==1.1.0
+      - cachier==3.1.2
+      - nicopal==0.6.4
+      - pqdm==0.2.0
