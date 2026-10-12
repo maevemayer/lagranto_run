@@ -1,7 +1,7 @@
 #!/bin/bash
 # ===========================================================================
 # Read-only sanity check of the spiritx environment for the LAGRANTO pipeline.
-# Resolves every [CHECK] item in case_studies/*/config.sh. Writes nothing.
+# Run it after following "Setting up" in the README. Writes nothing.
 #
 #   bash tools/check_spiritx_env.sh [YYYYMMDD]      (default 20220718)
 # ===========================================================================
@@ -35,6 +35,11 @@ command -v module >/dev/null && module -t avail cdo 2>&1 | head
 hr "storage: NC_ROOT on /scratchx, WORK_ROOT on /homedata"
 for d in /scratchx/$USER /homedata/$USER; do
     [[ -d $d ]] && df -h "$d" | tail -1 | awk -v d="$d" '{printf "  %-24s free %s of %s\n", d, $4, $2}'
+done
+
+hr "LAGRANTO at ${LAGRANTO_ROOT}"
+for prog in caltra/caltra trace/trace create_startf/create_startf; do
+    if [[ -x "${LAGRANTO_ROOT}/${prog}" ]]; then echo "  ok   ${prog}"; else echo "  MISS ${prog} (not built / LAGRANTO_ROOT wrong)"; fi
 done
 
 hr "LAGRANTO datelist interval (must be 6)"

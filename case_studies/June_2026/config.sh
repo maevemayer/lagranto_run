@@ -12,9 +12,8 @@
 #   * The DTDT climatology time-stencil is 6 h instead of 3 h (forced by the
 #     new cadence). All other math is unchanged from the notebooks.
 #
-# Values marked  [CHECK]  are best guesses for spiritx - confirm them with
+# New user? Follow "Setting up" in the top-level README, then check with
 #   bash tools/check_spiritx_env.sh      (from the repo root)
-# before the first submission.
 # ===========================================================================
 
 # ===================== EVENT - edit this block per run =======================
@@ -162,7 +161,8 @@ export REMAP_GRID="${REMAP_GRID:-none}"
 export DOMAIN_LATBOX="0,360,0,90"
 
 # ---- LAGRANTO ---------------------------------------------------------------
-export LAGRANTO_ROOT="/home/mmayer/code/lagranto.era5.test/lagranto.shellscript"
+# your own LAGRANTO build (see README "Setting up"); override with export LAGRANTO_ROOT=...
+export LAGRANTO_ROOT="${LAGRANTO_ROOT:-${HOME}/code/lagranto.era5.test/lagranto.shellscript}"
 # tracevars.shellscript used by stage 04 (from Levante)
 export LAGRANTO_PARAM_DIR="${PIPELINE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/lagranto_params"
 # Optional extra library path for the LAGRANTO binaries (netCDF-Fortran), only

@@ -99,8 +99,8 @@ directory has to exist: `source config.sh` once creates it.
   export CONDA_PKGS_DIRS=/homedata/$USER/conda/pkgs
   conda env create -p /homedata/$USER/conda/thesis -f environment.yml
   ```
-- Run `bash tools/check_spiritx_env.sh` (repo root) and fix any `[CHECK]` left in
-  `config.sh`.
+- Run `bash tools/check_spiritx_env.sh` (repo root); see "Setting up" in the
+  top-level README.
 - Set `set interval = "6"` in `$LAGRANTO/goodies/datelist.sh` (was `"3"`).
 
 `submit_all.sh` refuses to submit until the datelist interval is 6.
@@ -182,7 +182,7 @@ What changed for spiritx (the physics is untouched):
 | surface pressure | `sp` (134) | `sp`, or `exp(lnsp)` if `sp` is absent |
 | Python/CDO | `module load python3`, spack CDO 2.2.2 | `thesis` conda env from `environment.yml` on `/homedata` (any CDO; also colindex2 + analysis stack) |
 | Slurm | `--account=uc1275 --partition=shared`, up to 84 CPUs | no account, `--partition=zen4`, ≤32 CPUs |
-| LAGRANTO | `/work/uc1275/…/lagranto.shellscript`, intel/netcdf modules | `/home/mmayer/code/lagranto.era5.test/lagranto.shellscript`, no modules (`LAGRANTO_LD_LIBRARY_PATH` if needed) |
+| LAGRANTO | `/work/uc1275/…/lagranto.shellscript`, intel/netcdf modules | `$HOME/code/lagranto.era5.test/lagranto.shellscript` (`LAGRANTO_ROOT`), no modules (`LAGRANTO_LD_LIBRARY_PATH` if needed) |
 | outputs | `/work/uc1275/…`, `/scratch/u/u301827/…`, Slurm logs in the submit dir | netCDF (incl. P/S) in `/scratchx/$USER/lagranto_run/`, logs + trajectories in `/homedata/$USER/lagranto_run/`, nothing in `$HOME` |
 | param files | copied from fixed `/work` paths (incl. a stale `create_startf.param` that create_startf.sh overwrites anyway) | `tracevars.shellscript` versioned in `lagranto_params/` |
 | stage 04 logs | discarded (`/dev/null`) | `results_6h/logs/lagranto_<YYYYMMDD_HH>.log`; failed start times are listed and fail the job |
