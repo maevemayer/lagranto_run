@@ -34,8 +34,10 @@ issues_*.tsv.
                                [--njobs 32] [--out DIR] [--only M1,M2]
 """
 import argparse
+import fcntl
 import glob
 import hashlib
+import json
 import os
 import re
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -171,6 +173,11 @@ def stamp(d, n):
     return d.strftime("%Y%m%d%H%M")[:n]
 
 
+def jsonable(out):
+    """sets -> sorted lists, so a result can go to the JSON checkpoint and back."""
+    return {k: sorted(v) if isinstance(v, set) else v for k, v in out.items()}
+
+
 def scan_var(key, vdir, var):
     out = dict(var=var, issues=[], files=0, version=None, info={}, cal=set(),
                levh=set(), coefh=set(), gridh=set(), t=None)
@@ -180,7 +187,7 @@ def scan_var(key, vdir, var):
     out["files"] = len(files)
     if not files:
         issue(None, "no .nc files")
-        return key, out
+        return key, jsonable(out)
     stats = {n: [np.inf, -np.inf, 0, 0] for n in (var, "ps")}   # min max nmasked nnan
     tchunks = []
     for f in files:
@@ -283,7 +290,7 @@ def scan_var(key, vdir, var):
 
     if tchunks:
         t = np.concatenate(tchunks)
-        out["t"] = t
+        out["t"] = hsh(t)                  # hash only: results must fit in the checkpoint
         cal = next(iter(out["cal"]))
         dt = np.diff(t)
         gaps = np.where(dt > STEP + 1e-4)[0]
@@ -300,7 +307,7 @@ def scan_var(key, vdir, var):
         out["nsteps"] = len(t)
         out["missing"] = int(np.round((t[-1] - t[0]) / STEP)) + 1 - len(np.unique(t))
         out["years"] = (t[-1] - t[0] + STEP) / {"360_day": 360.}.get(cal, 365.2425)
-    return key, out
+    return key, jsonable(out)
 
 
 def regrid_status(model, label):
@@ -347,13 +354,60 @@ def matrix_table(rows, out, tag, cell):
     print_table(matrix, ["model"] + exps)
 
 
-def run(func, combos, njobs, thread=False, verbose=True):
+class Checkpoint:
+    """Append-only JSON-lines record of finished (member, variable) checks.
+
+    Every result is flushed to disk as soon as it arrives, so a job that times
+    out, crashes or is cancelled loses only the checks still running; the next
+    run with the same --activity/--exp/mode reuses everything recorded here.
+    """
+
+    def __init__(self, path, fresh=False):
+        self.path = path
+        self.lock = open(path + ".lock", "w")
+        try:
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise SystemExit(f"another run is using {path}; wait for it or scancel it first")
+        if fresh and os.path.exists(path):
+            os.remove(path)
+        self.done = {}
+        if os.path.exists(path):
+            with open(path) as fh:
+                for line in fh:
+                    try:                      # last line may be cut off by a kill
+                        r = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    self.done[tuple(r["key"]), r["var"]] = r["out"]
+        self.fh = open(path, "a")
+
+    def add(self, k, o):
+        self.done[k, o["var"]] = o
+        self.fh.write(json.dumps({"key": k, "var": o["var"], "out": o},
+                                 default=lambda x: x.item() if hasattr(x, "item") else str(x)) + "\n")
+        self.fh.flush()
+        os.fsync(self.fh.fileno())
+
+
+def run(func, combos, njobs, thread=False, verbose=True, ckpt=None):
     res = {k: {} for k in combos}
+    todo = []
+    for k, d in combos.items():
+        for v in VARS:
+            if ckpt is not None and (k, v) in ckpt.done:
+                res[k][v] = ckpt.done[k, v]
+            else:
+                todo.append((k, d, v))
+    if verbose and len(todo) < len(VARS) * len(combos):
+        print(f"  {len(VARS) * len(combos) - len(todo)} variable checks taken from {ckpt.path}", flush=True)
     with (ThreadPoolExecutor if thread else ProcessPoolExecutor)(njobs) as ex:
-        futs = [ex.submit(func, k, d, v) for k, d in combos.items() for v in VARS]
+        futs = [ex.submit(func, k, d, v) for k, d, v in todo]
         for n, fu in enumerate(as_completed(futs), 1):
             k, o = fu.result()
             res[k][o["var"]] = o
+            if ckpt is not None:
+                ckpt.add(k, o)
             if verbose:
                 print(f"  [{n}/{len(futs)}] {k[0]} {k[1]} {k[2]} {o['var']}: {o['files']} files, "
                       f"{len(o['issues'])} issues", flush=True)
@@ -370,7 +424,7 @@ def assess(k, o):
         if len({frozenset(o[v][name]) for v in VARS}) > 1:
             iss.append(("all", "-", f"{label} differ between variables"))
     ts = [o[v]["t"] for v in VARS]
-    if all(t is not None for t in ts) and len({hsh(t) for t in ts}) > 1:
+    if all(t is not None for t in ts) and len(set(ts)) > 1:
         iss.append(("all", "-", "time axes differ between variables: " + "; ".join(
             f"{v} {o[v]['start']}..{o[v]['end']} ({o[v]['nsteps']})" for v in VARS)))
 
@@ -436,6 +490,8 @@ def main():
     ap.add_argument("--njobs", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 8)))
     ap.add_argument("--out", default=f"/homedata/{os.environ.get('USER', 'mmayer')}/cmip6_check")
     ap.add_argument("--only", default="", help="comma-separated model names")
+    ap.add_argument("--fresh", action="store_true",
+                    help="ignore the checkpoint of an earlier run and check everything again")
     args = ap.parse_args()
     only = set(filter(None, args.only.split(",")))
     os.makedirs(args.out, exist_ok=True)
@@ -477,6 +533,9 @@ def main():
         print(f"\n-> {args.out}/{{matrix,summary}}_{tag}.tsv")
         return
 
+    ckpt = Checkpoint(os.path.join(args.out, f"checkpoint_{tag}.jsonl"), fresh=args.fresh)
+    if ckpt.done:
+        print(f"resuming: {len(ckpt.done)} finished variable checks in {ckpt.path}", flush=True)
     rows, issues = [], []
     if args.best:
         cand = {}
@@ -489,7 +548,7 @@ def main():
             rnd += 1
             batch = {e: ks.pop(0) for e, ks in pending.items()}
             print(f"\nround {rnd}: checking {len(batch)} members", flush=True)
-            res = run(scan_var, {k: combos[k] for k in batch.values()}, args.njobs)
+            res = run(scan_var, {k: combos[k] for k in batch.values()}, args.njobs, ckpt=ckpt)
             for e, k in batch.items():
                 row, iss = assess(k, res[k])
                 rows.append(row)
@@ -498,7 +557,7 @@ def main():
                     del pending[e]
         rows.sort(key=lambda r: (r["model"].lower(), exp_order(r["experiment"]), natural(r["member"])))
     else:
-        res = run(scan_var, combos, args.njobs)
+        res = run(scan_var, combos, args.njobs, ckpt=ckpt)
         for k in order(res):
             row, iss = assess(k, res[k])
             rows.append(row)
