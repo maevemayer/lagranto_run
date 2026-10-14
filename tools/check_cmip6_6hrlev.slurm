@@ -2,8 +2,8 @@
 #SBATCH --job-name=cmip6chk
 #SBATCH --partition=zen4
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=160G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=96G
 #SBATCH --time=06:00:00
 #SBATCH --signal=B:USR1@600
 #SBATCH --output=/homedata/%u/cmip6_check/%x-%j.out
@@ -15,6 +15,8 @@
 #   --best                               longest clean member per model/experiment
 #   --activity ScenarioMIP --exp 'ssp*'  one slice per job
 #   --fresh                              ignore the checkpoint, check everything again
+# Default 32 cores (half a zen4 node) starts much sooner than a full node;
+# for more:  sbatch --cpus-per-task=64 --mem=160G tools/check_cmip6_6hrlev.slurm ...
 #
 # Resuming: every finished check is saved to checkpoint_<tag>.jsonl in the
 # output dir. Resubmitting the same command skips what is already done.
@@ -31,7 +33,9 @@ ARGS=("$@")
 
 resubmit() {
     if (( CHAIN < MAXCHAIN )); then
+        # keep the resources this job was given (sbatch options override #SBATCH)
         sbatch --dependency=afterany:"${SLURM_JOB_ID}" --chdir="${HERE}" \
+               --cpus-per-task="${SLURM_CPUS_PER_TASK:-32}" --mem="${SLURM_MEM_PER_NODE:-98304}M" \
                --export=ALL,CMIP6CHK_CHAIN=$((CHAIN + 1)) \
                "${HERE}/tools/check_cmip6_6hrlev.slurm" ${ARGS[@]+"${ARGS[@]}"}
         echo "time limit near: continuation $((CHAIN + 1))/${MAXCHAIN} queued, it resumes from the checkpoint"
@@ -42,7 +46,7 @@ resubmit() {
 trap resubmit USR1
 
 # python runs in the background so bash can act on USR1 while it works
-"${PYTHON}" "${HERE}/tools/check_cmip6_6hrlev.py" --njobs "${SLURM_CPUS_PER_TASK:-64}" ${ARGS[@]+"${ARGS[@]}"} &
+"${PYTHON}" "${HERE}/tools/check_cmip6_6hrlev.py" --njobs "${SLURM_CPUS_PER_TASK:-32}" ${ARGS[@]+"${ARGS[@]}"} &
 PID=$!
 wait "${PID}"; rc=$?
 while kill -0 "${PID}" 2>/dev/null; do        # wait was interrupted by the signal
