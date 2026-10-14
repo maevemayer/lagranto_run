@@ -19,7 +19,7 @@ Originally written for DKRZ Levante; now ported to spiritx (see
    TCLIM +1 h fix is not needed here.)
 4. **DTDT stencil = 6 h.** In stage 03 the climatology time derivative uses the
    ±6 h neighbours (`dt_seconds = 2*6*3600`) because the climatology now lives
-   on a 6 h grid. Everything else in 03 (THETA, DTDP, PS, assembly) is identical.
+   on a 6 h grid. Everything else in 03 (THETA, PS, assembly) is identical.
 5. **Domain cut to the Northern Hemisphere from the start.** Stages 01 and 02
    apply `-sellonlatbox,$DOMAIN_LATBOX` (default `0,360,0,90`) **chained onto the
    remap**, so ERA5 is trimmed the instant it is regridded and *every* downstream
@@ -32,6 +32,22 @@ Originally written for DKRZ Levante; now ported to spiritx (see
 Nothing else — grid (`r720x360`), 9-year selection, 21-day running mean,
 central differences, potential-temperature formula, variable renames — is
 untouched.
+
+## Vertical gradient of the climatology (along the trajectory)
+
+d(T_clim)/dp is **not** a precomputed S-file field (the old `DTDP`, a central
+difference between neighbouring model levels). As in Hotz et al. (2024) and
+Roethlisberger & Papritz (2023), LAGRANTO traces T_clim 10 hPa below and above
+the parcel (`TCLIM:+10HPA`, `TCLIM:-10HPA` in `tracevars`), and stage 05 takes
+
+    dT_clim/dp = [T_clim(p + 10 hPa) - T_clim(p - 10 hPa)] / 20 hPa
+
+falling back to the one-sided 10 hPa difference with T_clim at the parcel where
+p + 10 hPa is below the ground. The term enters advection (+dp/dt dT_clim/dp)
+and adiabatic (-dp/dt dT_clim/dp) with opposite signs, so it shifts warming
+between the two without changing their sum or TA. Stage 05 stops if the
+gradient is not positive in 300-900 hPa (guards the +/- convention). Dropping
+the field also makes every S-file about a third smaller.
 
 ## Arrival location for land masking
 

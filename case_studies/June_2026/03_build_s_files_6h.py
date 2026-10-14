@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-Stage 03 - build S-files (THETA, TCLIM, DTDP, DTDT, PS), CORRECTED 6-hourly.
+Stage 03 - build S-files (THETA, TCLIM, DTDT, PS), CORRECTED 6-hourly.
 
 Same math as 03_S_files_final.ipynb EXCEPT (forced by the 6-hourly cadence):
   * slots are 00/06/12/18,
   * the climatology filenames are t_YYYY-MM-DD_6hHH_tbar.nc,
   * the DTDT central time difference uses +/-6 h (dt_seconds = 2*6*3600)
     instead of +/-3 h, because the climatology now lives on a 6 h grid.
-THETA, the DTDP central difference in pressure, PS handling, dataset assembly
-and attributes are all UNCHANGED.
+THETA, PS handling, dataset assembly and attributes are UNCHANGED.
+
+No DTDP field any more: the vertical gradient of the climatology is computed
+ALONG the trajectory in stage 05, from TCLIM traced 10 hPa below and above the
+parcel (TCLIM:+10HPA / TCLIM:-10HPA in tracevars), as in Hotz et al. (2024) /
+Roethlisberger & Papritz (2023). This also saves ~1/3 of every S-file.
 
 Usage:
     python 03_build_s_files_6h.py START_DATE END_DATE [N_JOBS]
@@ -69,30 +73,6 @@ def load_clim_with_overwritten_time(dt, hh):
         return ds_new
 
 
-def _central_diff_Tp(Tprof, Pprof):
-    """UNCHANGED 1D central difference along lev."""
-    Tprof = Tprof.astype(float); Pprof = Pprof.astype(float)
-    n = len(Tprof); dTdp = Tprof.copy()
-    for i in range(1, n - 1):
-        dTdp[i] = (Tprof[i + 1] - Tprof[i - 1]) / (Pprof[i + 1] - Pprof[i - 1])
-    dTdp[0] = (Tprof[1] - Tprof[0]) / (Pprof[1] - Pprof[0])
-    dTdp[-1] = (Tprof[-1] - Tprof[-2]) / (Pprof[-1] - Pprof[-2])
-    return dTdp
-
-
-def compute_dTdp(t_clim, p):
-    """UNCHANGED: vertical pressure gradient of climatological temperature."""
-    if t_clim.dims != p.dims:
-        raise ValueError("t_clim and p must have identical dimensions")
-    dTdp = xr.apply_ufunc(_central_diff_Tp, t_clim, p,
-                          input_core_dims=[["lev"], ["lev"]],
-                          output_core_dims=[["lev"]], vectorize=True)
-    dTdp.name = "dTdp"
-    dTdp.attrs["units"] = "K Pa-1"
-    dTdp.attrs["long_name"] = "Pressure gradient of climatological temperature"
-    return dTdp
-
-
 def shift_datetime(dt, hh, offset_hours):
     base = pd.to_datetime(dt + hh, format="%Y%m%d%H")
     shifted = base + pd.Timedelta(hours=offset_hours)
@@ -121,19 +101,16 @@ def compute_dtclim_dt_centered(t_minus, t_center, t_plus):
 
 
 def save_compiled_dataset(dt, hh, output_dir):
-    """Assembly of THETA/TCLIM/DTDP/DTDT/PS (+ hyam/hybm) -> SYYYYMMDD_hh."""
+    """Assembly of THETA/TCLIM/DTDT/PS (+ hyam/hybm) -> SYYYYMMDD_hh."""
     PS, p, theta, coeffs = compute_dp_p_theta(dt, hh)
     t_minus, t_clim, t_plus = load_three_times(dt, hh)
-    dTdp = compute_dTdp(t_clim, p)
     dTdt = compute_dtclim_dt_centered(t_minus, t_clim, t_plus)
-    dTdp = dTdp.transpose("time", "lev", "lat", "lon")
 
-    data_vars = {"THETA": theta, "TCLIM": t_clim, "DTDP": dTdp, "DTDT": dTdt, "PS": PS}
+    data_vars = {"THETA": theta, "TCLIM": t_clim, "DTDT": dTdt, "PS": PS}
     data_vars.update(coeffs)  # hyam, hybm from the P file (folded-in stage 04)
     ds = xr.Dataset(data_vars)
     ds.PS.attrs["long_name"] = "Pressure"; ds.PS.attrs["units"] = "hPa"
     ds.THETA.attrs["long_name"] = "Potential Temperature"; ds.THETA.attrs["units"] = "K"
-    ds.DTDP.attrs["long_name"] = "Pressure gradient of climatological temperature"; ds.DTDP.attrs["units"] = "K Pa-1"
     ds.DTDT.attrs["long_name"] = "Time derivative of T_clim"; ds.DTDT.attrs["units"] = "K s-1"
 
     out_file = f"{output_dir}/S{dt}_{hh}"

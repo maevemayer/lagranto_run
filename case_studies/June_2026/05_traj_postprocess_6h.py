@@ -2,8 +2,10 @@
 """Stage 05 - trajectory process decomposition for the ERA5T 2026 event.
 
 Framework port of 06_trajectories.ipynb, which is ALREADY 6-hourly
-(delta_t = 6*3600; the loader asserts 61 steps = 360 h / 6 h). None of the
-decomposition math is changed - only the I/O is wired to the event's
+(delta_t = 6*3600; the loader asserts 61 steps = 360 h / 6 h). The
+decomposition math is unchanged except for d(TCLIM)/dp: it is no longer a
+precomputed S-file field but computed along the trajectory from TCLIM traced
+10 hPa below/above the parcel (Hotz et al. 2024). Otherwise only the I/O is wired to the event's
 results_6h/ folder (from config.sh), and every trajectory found there is
 processed in parallel.
 
@@ -32,15 +34,33 @@ DELTA_T = 3600.0 * 6                                # 6-hourly (unchanged from n
 # --------------------------------------------------------------------------- #
 # Verbatim math from 06_trajectories.ipynb                                     #
 # --------------------------------------------------------------------------- #
+def vertical_gradient_tclim(df, dp_hpa=10.0):
+    """d(TCLIM)/dp along the trajectory, as in Hotz et al. (2024):
+    [TCLIM(p+10 hPa) - TCLIM(p-10 hPa)] / 20 hPa. Where one side is missing
+    (p+10 hPa below the ground, or outside the data) the one-sided difference
+    with TCLIM at the parcel over 10 hPa is used.
+    Returned x1000 (K per 1000 Pa), the scaling the old traced DTDP field had,
+    so DTDP_mid below is unchanged and still comes out in K Pa-1."""
+    pa = 100.0 * dp_hpa
+    up, mid, dn = df["TCLIM_M10"], df["TCLIM"], df["TCLIM_P10"]
+    grad = (dn - up) / (2 * pa)
+    grad = grad.fillna((mid - up) / pa).fillna((dn - mid) / pa)
+    return 1000.0 * grad
+
+
 def load_trajectory(date, hour, folder):
     hour_str = f"{int(hour):02d}"
     file = f"{folder}/trajectory_{date}_{hour_str}"
-    float_cols = ["time", "lon", "lat", "p", "T", "OMEGA", "THETA", "TCLIM", "DTDP", "DTDT"]
+    # column order = tracevars.shellscript: TCLIM is also traced 10 hPa below
+    # (TCLIM:+10HPA, p + 10 hPa) and above (TCLIM:-10HPA) the parcel
+    float_cols = ["time", "lon", "lat", "p", "T", "OMEGA", "THETA", "TCLIM",
+                  "TCLIM_P10", "TCLIM_M10", "DTDT"]
     df = pd.read_csv(file, sep=r"\s+", skiprows=4, names=float_cols, dtype=str)
     for c in float_cols:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    sentinel_cols = ["lon", "lat", "p", "T", "OMEGA", "THETA", "TCLIM", "DTDP", "DTDT"]
+    sentinel_cols = float_cols[1:]
     df[sentinel_cols] = df[sentinel_cols].where(~df[sentinel_cols].eq(-999.0))
+    df["DTDP"] = vertical_gradient_tclim(df)
     df["valid"] = df[["lon", "lat", "p", "T", "TCLIM"]].notna().all(axis=1)
     df["new_traj"] = df["time"].fillna(0) == 0
     df["traj_id"] = df["new_traj"].cumsum()
@@ -49,6 +69,12 @@ def load_trajectory(date, hour, folder):
     df["TA"] = df["T"] - df["TCLIM"]
     df = df.set_index(["traj_id", "step"])
     ds = df.drop(columns=["new_traj"]).to_xarray()
+    # sign check of the +/-10HPA convention: T_clim increases with pressure
+    # throughout the troposphere, so the gradient must be positive there
+    trop = (df["p"] > 300) & (df["p"] < 900)
+    if trop.any() and not df.loc[trop, "DTDP"].median() > 0:
+        raise ValueError(f"{file}: dTCLIM/dp median {df.loc[trop, 'DTDP'].median():.3g} <= 0 in "
+                         "300-900 hPa - check the sign convention of TCLIM:+/-10HPA in tracevars")
     assert ds.step.size == 61, (
         f"{ds.step.size} steps -> {360/(ds.step.size-1):.0f} h input "
         f"(expected 61/6 h): stale/3-h file {file}"
