@@ -9,7 +9,10 @@
 # ---------------------------------------------------------------------------
 # Read-only integrity check of /bdd/CMIP6 6hrLev hus/ta/ua/va.
 # Submit:  mkdir -p /homedata/$USER/cmip6_check && sbatch tools/check_cmip6_6hrlev.slurm
-# Extra args go to the script, e.g. --exp ssp585 --activity ScenarioMIP
+# Default = all activities/experiments. Extra args go to the script, e.g.
+#   --quick                              filename inventory only (fast)
+#   --best                               longest clean member per model/experiment
+#   --activity ScenarioMIP --exp 'ssp*'  one slice per job if 6 h is too short
 # ---------------------------------------------------------------------------
 set -euo pipefail
 HERE="${SLURM_SUBMIT_DIR:-$(pwd)}"
