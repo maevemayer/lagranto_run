@@ -12,8 +12,10 @@ coverage, and flags anything that would break a trajectory run:
   vertical   lev / hybrid coefficients differ between files or variables;
              a formula_terms variable (ps, ap or a/p0, b, ...) is missing
   horizontal lat/lon differ between files or variables
-  values     fill/NaN or out-of-range values in sampled timesteps (first,
-             middle and last of every file), for the variable and for ps
+  values     fill/NaN or garbage values in sampled timesteps (last step of
+             every file + first step of the first file), variable and ps
+Warnings (not failures): coefficients found by variable name instead of
+formula_terms, negative hus.
 
 Default: every activity and experiment, every member fully checked.
   --quick  only lists directories and parses filenames (no file opened)
@@ -51,7 +53,9 @@ VARS = ("hus", "ta", "ua", "va")
 STEP = 0.25                                    # 6 h in days
 REF = "days since 1850-01-01 00:00:00"
 CAL_ALIAS = {"gregorian": "standard", "365_day": "noleap", "366_day": "all_leap"}
-RANGES = {"ta": (150., 350.), "hus": (-1e-4, 0.06), "ua": (-250., 250.),
+# hard limits: outside = corrupt/garbage data (issue). Cold model tops (~120 K)
+# and negative hus from spectral models are real and only reported as warnings.
+RANGES = {"ta": (100., 350.), "hus": (-0.05, 0.1), "ua": (-250., 250.),
           "va": (-250., 250.), "ps": (3.0e4, 1.15e5)}
 UNITS = {"ta": {"K"}, "hus": {"1", "kg kg-1", "kg/kg"}, "ua": {"m s-1", "m/s"},
          "va": {"m s-1", "m/s"}, "ps": {"Pa"}}
@@ -108,9 +112,11 @@ def natural(s):
 
 
 def discover(activity, exp, only):
-    """key = (model, experiment, member, grid, institution, activity)"""
-    pat = os.path.join(ROOT, activity, "*", "*", exp, "*", "6hr[lL]ev")
-    for d in sorted(glob.glob(pat)):
+    """key = (model, experiment, member, grid, institution, activity);
+    activity and exp are comma-separated globs."""
+    dirs = sorted({d for a in activity.split(",") for e in exp.split(",")
+                   for d in glob.glob(os.path.join(ROOT, a, "*", "*", e, "*", "6hr[lL]ev"))})
+    for d in dirs:
         act, inst, model, ex, member = d.split(os.sep)[-6:-1]
         if only and model not in only:
             continue
@@ -163,6 +169,34 @@ def pressure_profile(nc, terms, ps0=101325.):
     return p / 100.
 
 
+def vertical_terms(nc, levdim):
+    """formula_terms of the vertical coordinate -> ({term: variable}, how found)."""
+    parse = lambda ft: dict(re.findall(r"(\w+):\s*(\w+)", ft))
+    lev = nc.variables.get(levdim)
+    if lev is not None and getattr(lev, "formula_terms", ""):
+        return parse(lev.formula_terms), "formula_terms"
+    for name, var in nc.variables.items():
+        if "formula_terms" in var.ncattrs() and levdim in var.dimensions:
+            return parse(var.formula_terms), f"formula_terms on '{name}'"
+    for cand in ({"ap": "ap", "b": "b", "ps": "ps"}, {"a": "a", "b": "b", "p0": "p0", "ps": "ps"}):
+        if all(n in nc.variables for n in cand.values()):
+            return cand, "inferred from variable names"
+    return {}, None
+
+
+def coef_fingerprint(a):
+    """1-d coefficients in full, larger fields (orog) as mean/min/max."""
+    a = np.ma.getdata(np.asarray(a, "f8"))
+    return a.ravel().tolist() if a.ndim <= 1 else [float(a.mean()), float(a.min()), float(a.max())]
+
+
+def coefs_close(x, y):
+    return x.keys() == y.keys() and all(
+        len(x[k]) == len(y[k]) and np.allclose(x[k], y[k], rtol=1e-5,
+                                               atol=1e-6 * max(1., np.abs(x[k]).max(initial=0.)))
+        for k in x)
+
+
 def atmos_component(source):
     """'atmos: LMDZ (NPv6, N96; 144 x 143 ...)' from the global 'source' attribute."""
     m = re.search(r"(?:^|\n)\s*atmos:\s*([^\n]+)", source)
@@ -179,9 +213,12 @@ def jsonable(out):
 
 
 def scan_var(key, vdir, var):
-    out = dict(var=var, issues=[], files=0, version=None, info={}, cal=set(),
-               levh=set(), coefh=set(), gridh=set(), t=None)
+    out = dict(var=var, issues=[], warnings=[], files=0, version=None, info={}, cal=set(),
+               levh=set(), coef=None, gridh=set(), t=None, seg=None)
     issue = lambda f, msg: out["issues"].append((var, os.path.basename(f) if f else "-", msg))
+    warns = {}                                   # message -> number of files
+    warn = lambda msg: warns.__setitem__(msg, warns.get(msg, 0) + 1)
+    coef_diff = {}                               # term -> (files, max |diff|)
     d, out["version"] = version_dir(os.path.join(vdir, var, key[3]))
     files = sorted(glob.glob(os.path.join(d, "*.nc"))) if d else []
     out["files"] = len(files)
@@ -190,7 +227,7 @@ def scan_var(key, vdir, var):
         return key, jsonable(out)
     stats = {n: [np.inf, -np.inf, 0, 0] for n in (var, "ps")}   # min max nmasked nnan
     tchunks = []
-    for f in files:
+    for fi, f in enumerate(files):
         try:
             with netCDF4.Dataset(f) as nc:
                 v = nc.variables[var]
@@ -216,20 +253,32 @@ def scan_var(key, vdir, var):
                 out["gridh"].add(hsh(*hvars))
                 # vertical grid
                 levvar = nc.variables.get(dims[1])
-                terms = dict(re.findall(r"(\w+):\s*(\w+)", getattr(levvar, "formula_terms", ""))) if levvar is not None else {}
+                terms, how = vertical_terms(nc, dims[1])
                 if levvar is None:
                     issue(f, f"no coordinate variable for vertical dim '{dims[1]}'")
                 else:
                     out["levh"].add(hsh(levvar[:]))
                 if not terms:
-                    issue(f, "lev has no formula_terms (pressure not reconstructable)")
-                coefs = []
+                    issue(f, "no formula_terms and no ap/b or a/b/p0 + ps variables: "
+                             "pressure not reconstructable")
+                elif how != "formula_terms":
+                    warn(f"vertical coefficients {how}")
+                coefs = {}
                 for k, n in sorted(terms.items()):
                     if n not in nc.variables:
                         issue(f, f"formula term {k}: '{n}' missing from file")
-                    elif k != "ps" and n != dims[1]:
-                        coefs.append(nc.variables[n][...])
-                out["coefh"].add(hsh(*coefs))
+                    elif k != "ps":
+                        coefs[k] = coef_fingerprint(nc.variables[n][...])
+                if out["coef"] is None:
+                    out["coef"] = coefs
+                else:
+                    for k in set(coefs) | set(out["coef"]):
+                        a, b = coefs.get(k), out["coef"].get(k)
+                        if a is None or b is None or not coefs_close({k: a}, {k: b}):
+                            d = (float(np.max(np.abs(np.subtract(a, b)))) if a is not None and b is not None
+                                 and len(a) == len(b) else np.inf)
+                            n0, d0 = coef_diff.get(k, (0, 0.))
+                            coef_diff[k] = (n0 + 1, max(d0, d))
                 psname = terms.get("ps")
                 ps = nc.variables.get(psname) if psname else None
                 if ps is not None and ps.shape[0] != nt:
@@ -255,8 +304,9 @@ def scan_var(key, vdir, var):
                         grid_desc=" ".join(str(getattr(nc, "grid", "?")).split()),
                         hour0=f"{dates[0].hour:02d}" if nt else "?")
 
-                # sampled values: first/middle/last step (also catches truncated files)
-                for i in sorted({0, nt // 2, nt - 1} - {-1}):
+                # sampled values: last step of every file (catches truncated files)
+                # plus the first step of the first file
+                for i in sorted(({0} if fi == 0 else set()) | {nt - 1} - {-1}):
                     for n, vv in ((var, v), ("ps", ps)):
                         if vv is None:
                             continue
@@ -275,10 +325,13 @@ def scan_var(key, vdir, var):
         except Exception as e:
             issue(f, f"cannot open/read: {type(e).__name__}: {e}")
 
-    for name, label in (("cal", "calendars"), ("levh", "lev values"),
-                        ("coefh", "hybrid coefficients"), ("gridh", "lat/lon")):
+    for name, label in (("cal", "calendars"), ("levh", "lev values"), ("gridh", "lat/lon")):
         if len(out[name]) > 1:
             issue(None, f"{label} differ between files ({len(out[name])} variants)")
+    for k, (n, d) in sorted(coef_diff.items()):
+        scale = np.abs(out["coef"].get(k, [np.nan])).max()
+        issue(None, f"vertical coefficient '{k}' differs from the first file in {n} files "
+                    f"(max |diff| {d:.3g}, values up to {scale:.4g})")
     for n, (lo, hi, nmask, nnan) in stats.items():
         if n == "ps" and lo == np.inf:
             continue
@@ -286,7 +339,10 @@ def scan_var(key, vdir, var):
             issue(None, f"{n}: {nmask} fill/masked and {nnan} NaN values in sampled steps")
         if lo < RANGES[n][0] or hi > RANGES[n][1]:
             issue(None, f"{n}: sampled range {lo:.4g} .. {hi:.4g} outside {RANGES[n]}")
+    if var == "hus" and stats["hus"][0] < 0:
+        warn(f"negative hus in sampled steps (min {stats['hus'][0]:.3g})")
     out["range"] = {n: (s[0], s[1]) for n, s in stats.items()}
+    out["warnings"] = [f"{m} ({n}/{len(files)} files)" for m, n in sorted(warns.items())]
 
     if tchunks:
         t = np.concatenate(tchunks)
@@ -306,7 +362,14 @@ def scan_var(key, vdir, var):
         out["start"], out["end"] = fmt(0), fmt(len(t) - 1)
         out["nsteps"] = len(t)
         out["missing"] = int(np.round((t[-1] - t[0]) / STEP)) + 1 - len(np.unique(t))
-        out["years"] = (t[-1] - t[0] + STEP) / {"360_day": 360.}.get(cal, 365.2425)
+        ylen = {"360_day": 360.}.get(cal, 365.2425)
+        out["years"] = (t[-1] - t[0] + STEP) / ylen
+        # longest stretch without gaps or irregular steps
+        cuts = np.where(np.abs(dt - STEP) > 1e-4)[0]
+        lo = np.r_[0, cuts + 1]
+        hi = np.r_[cuts, len(t) - 1]
+        j = int(np.argmax(t[hi] - t[lo]))
+        out["seg"] = (fmt(lo[j]), fmt(hi[j]), float((t[hi[j]] - t[lo[j]] + STEP) / ylen))
     return key, jsonable(out)
 
 
@@ -419,10 +482,12 @@ def assess(k, o):
     model, exp, member, grid, inst, act = k
     iss = [i for v in VARS for i in o[v]["issues"]]
     # the 4 variables must share grid, levels, coefficients, calendar and time axis
-    for name, label in (("gridh", "lat/lon"), ("levh", "lev values"),
-                        ("coefh", "hybrid coefficients"), ("cal", "calendar")):
+    for name, label in (("gridh", "lat/lon"), ("levh", "lev values"), ("cal", "calendar")):
         if len({frozenset(o[v][name]) for v in VARS}) > 1:
             iss.append(("all", "-", f"{label} differ between variables"))
+    cs = [o[v]["coef"] for v in VARS if o[v].get("coef") is not None]
+    if any(not coefs_close(cs[0], c) for c in cs[1:]):
+        iss.append(("all", "-", "vertical coefficients differ between variables"))
     ts = [o[v]["t"] for v in VARS]
     if all(t is not None for t in ts) and len(set(ts)) > 1:
         iss.append(("all", "-", "time axes differ between variables: " + "; ".join(
@@ -444,12 +509,15 @@ def assess(k, o):
         first_hour=info.get("hour0", "?"),
         start=r.get("start", "-"), end=r.get("end", "-"),
         years=f"{r.get('years', 0):.1f}", nsteps=r.get("nsteps", 0),
+        gapfree_start=(r.get("seg") or "--")[0], gapfree_end=(r.get("seg") or "--")[1],
+        gapfree_years=f"{(r.get('seg') or (0, 0, 0))[2]:.1f}",
         missing=max((o[v].get("missing", 0) for v in VARS), default="?"),
         files="/".join(str(o[v]["files"]) for v in VARS),
         versions=",".join(sorted({str(o[v]["version"]) for v in VARS})),
         ta_range="{:.4g}..{:.4g}".format(*o["ta"].get("range", {}).get("ta", (np.nan, np.nan))),
         hus_min="{:.3g}".format(o["hus"].get("range", {}).get("hus", (np.nan,))[0]),
-        status="OK" if not iss else f"{len(iss)} issues")
+        status="OK" if not iss else f"{len(iss)} issues",
+        warnings="; ".join(sorted({f"{v}: {w}" for v in VARS for w in o[v].get("warnings", [])})))
     return row, [(model, exp, member, grid, *i) for i in iss]
 
 
@@ -469,17 +537,19 @@ def ensemble_table(rows, members):
             end=b["end"][:10] if ok else "-", years=b["years"] if ok else "0",
             atmos_model=b["atmos_model"], dycore=b["dycore"], dycore_detail=b["dycore_detail"],
             nominal=b["nominal"], shape=b["shape"], dlon=b["dlon"], dlat=b["dlat"],
+            gapfree_years=b["gapfree_years"] if not ok else b["years"],
             grid=b["grid"], regridded=b["regridded"], grid_desc=b["grid_desc"],
             nlev=b["nlev"], n200_1000=b["n200_1000"], ptop_hPa=b["ptop_hPa"], calendar=b["calendar"],
             status="OK" if ok else f"no clean member ({len(rs)} checked)",
+            warnings=b["warnings"],
             all_members=",".join(sorted(members[m, e], key=natural))))
     return out
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--activity", default="*", help="CMIP, ScenarioMIP, ... (glob, default all)")
-    ap.add_argument("--exp", default="*", help="historical, ssp585, ... (glob, default all)")
+    ap.add_argument("--activity", default="*", help="CMIP, ScenarioMIP, ... (comma-separated globs, default all)")
+    ap.add_argument("--exp", default="*", help="e.g. 'piControl,historical,ssp*' (comma-separated globs, default all)")
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--quick", action="store_true",
                       help="inventory from directory and file names only (minutes, no file opened)")
@@ -495,7 +565,8 @@ def main():
     args = ap.parse_args()
     only = set(filter(None, args.only.split(",")))
     os.makedirs(args.out, exist_ok=True)
-    tag = "_".join(s.replace("*", "all") for s in (args.activity, args.exp)) + \
+    tag = "_".join(re.sub(r"[^\w+-]", "", s.replace("*", "all").replace(",", "+"))
+                   for s in (args.activity, args.exp)) + \
         ("_quick" if args.quick else "_best" if args.best else "")
 
     combos = dict(discover(args.activity, args.exp, only))
@@ -580,7 +651,12 @@ def main():
             models.append(r)
     print_table(models, ["model", "atmos_model", "dycore", "dycore_detail", "shape", "dlon", "dlat", "nominal",
                          "grid", "regridded", "nlev", "n200_1000", "ptop_hPa", "calendar"])
-    print_table(ens, ["model", "experiment", "n_members", "clean", "member", "start", "end", "years", "status"])
+    print_table(ens, ["model", "experiment", "n_members", "clean", "member", "start", "end", "years",
+                      "gapfree_years", "status"])
+    print("\nwarnings (real data properties, not failures):")
+    for r in ens:
+        if r["warnings"]:
+            print(f"  {r['model']} {r['experiment']} {r['member']}: {r['warnings']}")
     print(f"\n{sum(r['status'] == 'OK' for r in rows)}/{len(rows)} checked members clean; "
           f"{len(issues)} issues -> {args.out}/issues_{tag}.tsv")
     for i in issues[:60]:

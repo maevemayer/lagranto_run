@@ -2,8 +2,8 @@
 #SBATCH --job-name=cmip6chk
 #SBATCH --partition=zen4
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=96G
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=160G
 #SBATCH --time=06:00:00
 #SBATCH --signal=B:USR1@600
 #SBATCH --output=/homedata/%u/cmip6_check/%x-%j.out
@@ -42,7 +42,7 @@ resubmit() {
 trap resubmit USR1
 
 # python runs in the background so bash can act on USR1 while it works
-"${PYTHON}" "${HERE}/tools/check_cmip6_6hrlev.py" --njobs "${SLURM_CPUS_PER_TASK:-32}" ${ARGS[@]+"${ARGS[@]}"} &
+"${PYTHON}" "${HERE}/tools/check_cmip6_6hrlev.py" --njobs "${SLURM_CPUS_PER_TASK:-64}" ${ARGS[@]+"${ARGS[@]}"} &
 PID=$!
 wait "${PID}"; rc=$?
 while kill -0 "${PID}" 2>/dev/null; do        # wait was interrupted by the signal
