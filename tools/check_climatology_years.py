@@ -9,14 +9,14 @@ The years each file actually averages are read from its cdo history (the
 'cdo cat ... t_YYYY-MM-DD_6hHH_mean.nc ...' step that built it).
 
 Usage: python check_climatology_years.py TBAR_DIR [TBAR_DIR ...]
-(reads only the history attribute, 16 files in parallel; prints progress)
+(reads only the history attribute, 8 processes in parallel; prints progress)
 """
 import collections
 import glob
 import os
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 
 try:                                    # fast: read only the global attribute
     import netCDF4
@@ -50,8 +50,9 @@ def main():
         files = sorted(glob.glob(os.path.join(folder, "t_*_tbar.nc")))
         print(f"\n{folder}: {len(files)} climatology files")
         summary = collections.Counter()
-        with ThreadPoolExecutor(max_workers=16) as pool:
-            for i, (f, hist) in enumerate(zip(files, pool.map(read_history, files)), 1):
+        # processes, not threads: the HDF5 library under netCDF4 is not thread-safe
+        with ProcessPoolExecutor(max_workers=8) as pool:
+            for i, (f, hist) in enumerate(zip(files, pool.map(read_history, files, chunksize=32)), 1):
                 year = int(re.search(r"t_(\d{4})-\d\d-\d\d_6h\d\d_tbar\.nc", os.path.basename(f)).group(1))
                 found = sorted({int(y) for y in re.findall(r"t_(\d{4})-\d\d-\d\d_6h\d\d_mean\.nc", hist)})
                 want = paper_years(year)
