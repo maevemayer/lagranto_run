@@ -45,15 +45,14 @@ export ARRIVAL_P_BOTTOM="${ARRIVAL_P_BOTTOM:-1000}"
 export ARRIVAL_P_TOP="${ARRIVAL_P_TOP:-200}"
 export ARRIVAL_NLEV="${ARRIVAL_NLEV:-17}"
 
-# Climatology (TCLIM, stage 02): years averaged for the 21-day running-mean
-# T climatology at each 6-hourly slot.
-#   CLIM_WINDOW=centered -> analogue rule (as in the Levante analogue pipeline):
-#                           event year +/- 4 (CLIM_NYEARS=9), shifted to stay inside
-#                           CLIM_FIRST_YEAR..CLIM_LAST_YEAR. 2022 -> 2017..2025.
-#   CLIM_WINDOW=trailing -> old event rule: event year and the 8 before it.
-#   CLIM_YEARS="1991-2020" or "2014 2016 2018" -> exactly these years (overrides).
-# NB /proju ERA5 starts in 1979 (Levante: 1940); stage 02 stops if a year is missing.
-export CLIM_WINDOW="${CLIM_WINDOW:-centered}"
+# Climatology (TCLIM, stage 02) - the paper definition (Hotz et al. 2024): the
+# 21-day running-mean T at each 6-hourly slot, averaged over a centred 9-year
+# window (event year +/- 4), clamped to 1940..2025 so it never extends past
+# 2025: 2021-2026 all get 2017-2025, 2022 -> 2017-2025, 1990 -> 1986-1994.
+# CLIM_YEARS="1991-2020" or "2014 2016 2018" overrides it. Years after
+# CLIM_LAST_YEAR are refused; stage 02 stops if a year has no ERA5 input
+# (/proju starts in 1979). Check finished files: tools/check_climatology_years.py
+export CLIM_WINDOW="${CLIM_WINDOW:-centered}"   # only "centered" (paper rule) is accepted
 export CLIM_NYEARS="${CLIM_NYEARS:-9}"
 export CLIM_FIRST_YEAR="${CLIM_FIRST_YEAR:-1940}"
 export CLIM_LAST_YEAR="${CLIM_LAST_YEAR:-2025}"

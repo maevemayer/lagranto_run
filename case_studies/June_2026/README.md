@@ -132,7 +132,7 @@ Everything event-specific is in the **EVENT block at the top of `config.sh`**:
 | `ARRIVAL_LON_MIN/MAX`, `ARRIVAL_LAT_MIN/MAX` | -5.5..5.0 E, 44.5..55.0 N (lon in -180..180, boxes across 0E are fine) |
 | `ARRIVAL_DLON`, `ARRIVAL_DLAT` | 0.5, 0.5 deg |
 | `ARRIVAL_P_BOTTOM`, `ARRIVAL_P_TOP`, `ARRIVAL_NLEV` | 1000, 200, 17 hPa (every 50 hPa) |
-| `CLIM_WINDOW` | `centered`: analogue rule, year +/-4 clamped to 1940-2025 -> 2017..2025 for 2022 |
+| climatology | paper rule: centred 9 years, clamped to 1940-2025 (2021-2026 -> 2017-2025, 2022 -> 2017-2025); `CLIM_YEARS` overrides, years after 2025 refused |
 
 Then simply:
 ```bash
@@ -153,9 +153,10 @@ while read RANK DATA_START DATA_END TRAJ_START TRAJ_END; do
 done < ranks.txt
 ```
 (`config.sh` derives all subpaths from `RUN_NAME`, so exporting it per rank
-keeps each analogue isolated. With the default `CLIM_WINDOW=centered` every
+keeps each analogue isolated. With the paper rule (default) every
 analogue gets its own centred 9-year climatology (year +/-4, clamped to
-1940-2025), as in the Levante analogue pipeline.)
+1940-2025), as in the Levante analogue pipeline. Check any finished
+climatology with `python tools/check_climatology_years.py <tbar dir>`.)
 
 ## Model levels — `LEVELS` (default `18/137`)
 

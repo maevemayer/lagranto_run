@@ -162,27 +162,40 @@ def trailing_climatology_years(base_start, base_end, var_num=130, ml="ml"):
     return [base_start.year - i for i in range(0, 9)]
 
 
+def paper_climatology_years(year, n_years=9, first_year=1940, last_year=2025):
+    """The paper's climatology (Hotz et al. 2024): a centred n-year window of
+    21-day running means, clamped to first_year..last_year, so it never
+    extends past 2025 (2021-2026 all get 2017-2025). Identical to the
+    analogue pipeline's climatology_years_for_analogue for 1940-2025."""
+    start, end = year - n_years // 2, year + n_years // 2
+    if end > last_year:
+        start, end = last_year - n_years + 1, last_year
+    elif start < first_year:
+        start, end = first_year, first_year + n_years - 1
+    return list(range(start, end + 1))
+
+
 def choose_climatology_years(base_start, base_end, var_num=130, ml="ml"):
     """Climatology years, from config.sh:
-      CLIM_YEARS set           -> exactly those years
-      CLIM_WINDOW=centered     -> analogue rule: year +/- CLIM_NYEARS//2, clamped
-                                  to CLIM_FIRST_YEAR..CLIM_LAST_YEAR  [default]
-      CLIM_WINDOW=trailing     -> old event rule (year and the 8 before)
-    Then checks that ERA5 input exists for every year, so a gap fails loudly
-    instead of silently averaging fewer years."""
+      CLIM_YEARS set -> exactly those years
+      otherwise      -> the paper rule: year +/- CLIM_NYEARS//2, clamped to
+                        CLIM_FIRST_YEAR..CLIM_LAST_YEAR (1940..2025)
+    Years after CLIM_LAST_YEAR are refused. Then checks that ERA5 input exists
+    for every year, so a gap fails loudly instead of silently averaging fewer."""
     env = os.environ
+    last = int(env.get("CLIM_LAST_YEAR", "2025"))
+    if env.get("CLIM_WINDOW", "centered") != "centered":
+        raise SystemExit("CLIM_WINDOW other than 'centered' is not the paper definition (removed)")
     if env.get("CLIM_YEARS", "").strip():
         years = parse_clim_years(env["CLIM_YEARS"])
         how = "CLIM_YEARS"
-    elif env.get("CLIM_WINDOW", "centered") == "trailing":
-        years = sorted(trailing_climatology_years(base_start, base_end, var_num, ml))
-        how = "trailing window"
     else:
-        years = climatology_years_for_analogue(
+        years = paper_climatology_years(
             base_start.year, n_years=int(env.get("CLIM_NYEARS", "9")),
-            first_year=int(env.get("CLIM_FIRST_YEAR", "1940")),
-            last_year=int(env.get("CLIM_LAST_YEAR", "2025")))
-        how = "centered window (analogue rule)"
+            first_year=int(env.get("CLIM_FIRST_YEAR", "1940")), last_year=last)
+        how = "paper rule (centred, clamped)"
+    if max(years) > last:
+        raise SystemExit(f"climatology years {years} extend past {last} - not the paper definition")
     print(f"Climatology years ({how}): {years}", flush=True)
 
     window = pd.date_range(base_start - pd.Timedelta(days=11),
