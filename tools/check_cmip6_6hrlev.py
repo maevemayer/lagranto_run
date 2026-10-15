@@ -91,6 +91,7 @@ DYCORE = {
     "IPSL-CM6A-LR": (_GP, "LMDZ6 finite difference lat-lon 144x143"),
     "IPSL-CM6A-LR-INCA": (_GP, "LMDZ6 finite difference lat-lon 144x143"),
     "IPSL-CM5A2-INCA": (_GP, "LMDZ5 finite difference lat-lon 96x95"),
+    "IPSL-CM6A-MR1": (_GP, "LMDZ6 finite difference lat-lon"),
     "MIROC6": (_SP, "CCSR-AGCM T85"), "MIROC-ES2L": (_SP, "CCSR-AGCM T42"), "MIROC-ES2H": (_SP, "CCSR-AGCM T85"),
     "MPI-ESM1-2-LR": (_SP, "ECHAM6.3 T63"), "MPI-ESM1-2-HR": (_SP, "ECHAM6.3 T127"),
     "MPI-ESM-1-2-HAM": (_SP, "ECHAM6.3-HAM T63"), "NESM3": (_SP, "ECHAM6.3 T63"),
@@ -477,6 +478,31 @@ def run(func, combos, njobs, thread=False, verbose=True, ckpt=None):
     return res
 
 
+def period_years(start, end, cal):
+    """Length in years of 'YYYY-MM-DD HH:MM' .. 'YYYY-MM-DD HH:MM', both steps included."""
+    d = lambda x: cftime.datetime(int(x[:4]), int(x[5:7]), int(x[8:10]), int(x[11:13]), int(x[14:16]),
+                                  calendar=cal)
+    days = cftime.date2num(d(end), REF, cal) - cftime.date2num(d(start), REF, cal) + STEP
+    return days / {"360_day": 360.}.get(cal, 365.2425), int(round(days / STEP))
+
+
+def common_period(o):
+    """(start, end) shared by all 4 variables if their time axes only differ in
+    length: each one regular 6-hourly without gaps, same calendar and same
+    hours of the day. Then they are identical inside the common period.
+    None otherwise."""
+    if any(o[v]["t"] is None for v in VARS):
+        return None
+    if any(("time gaps" in m or "irregular" in m) for v in VARS for _, _, m in o[v]["issues"]):
+        return None
+    if len({c for v in VARS for c in o[v]["cal"]}) != 1:
+        return None
+    if len({(int(o[v]["start"][11:13]) % 6, o[v]["start"][14:16]) for v in VARS}) != 1:
+        return None
+    start, end = max(o[v]["start"] for v in VARS), min(o[v]["end"] for v in VARS)
+    return (start, end) if start < end else None
+
+
 def assess(k, o):
     """One summary row + all issues for one model/experiment/member/grid."""
     model, exp, member, grid, inst, act = k
@@ -489,12 +515,24 @@ def assess(k, o):
     if any(not coefs_close(cs[0], c) for c in cs[1:]):
         iss.append(("all", "-", "vertical coefficients differ between variables"))
     ts = [o[v]["t"] for v in VARS]
+    per_var = "; ".join(f"{v} {o[v].get('start')}..{o[v].get('end')}" for v in VARS)
+    warns = {f"{v}: {w}" for v in VARS for w in o[v].get("warnings", [])}
+    common = None
     if all(t is not None for t in ts) and len(set(ts)) > 1:
-        iss.append(("all", "-", "time axes differ between variables: " + "; ".join(
-            f"{v} {o[v]['start']}..{o[v]['end']} ({o[v]['nsteps']})" for v in VARS)))
+        common = common_period(o)
+        if common is None:
+            iss.append(("all", "-", f"time axes differ between variables: {per_var}"))
+        else:       # e.g. IPSL SSPs: ta to 2100, hus/ua/va to 2055 -> usable 2015-2055
+            warns.add(f"variables cover different periods ({per_var}); common period used")
 
     r = o["ta"] if o["ta"]["t"] is not None else next((o[v] for v in VARS if o[v]["t"] is not None), o["ta"])
     info = r["info"] or {}
+    start, end, years, nsteps = r.get("start", "-"), r.get("end", "-"), r.get("years", 0), r.get("nsteps", 0)
+    seg = r.get("seg") or ("-", "-", 0)
+    if common:
+        start, end = common
+        years, nsteps = period_years(start, end, next(iter(r["cal"])))
+        seg = (start, end, years)          # every variable is gap-free here
     dyc = DYCORE.get(model, ("?", "?"))
     label = info.get("grid_label", grid)
     row = dict(
@@ -507,17 +545,15 @@ def assess(k, o):
         ptop_hPa=f"{info.get('ptop', np.nan):.3g}", pbot_hPa=f"{info.get('pbot', np.nan):.4g}",
         lev_order=info.get("order", "?"), calendar=",".join(sorted(r["cal"])) or "?",
         first_hour=info.get("hour0", "?"),
-        start=r.get("start", "-"), end=r.get("end", "-"),
-        years=f"{r.get('years', 0):.1f}", nsteps=r.get("nsteps", 0),
-        gapfree_start=(r.get("seg") or "--")[0], gapfree_end=(r.get("seg") or "--")[1],
-        gapfree_years=f"{(r.get('seg') or (0, 0, 0))[2]:.1f}",
+        start=start, end=end, years=f"{years:.1f}", nsteps=nsteps,
+        gapfree_start=seg[0], gapfree_end=seg[1], gapfree_years=f"{seg[2]:.1f}",
         missing=max((o[v].get("missing", 0) for v in VARS), default="?"),
         files="/".join(str(o[v]["files"]) for v in VARS),
         versions=",".join(sorted({str(o[v]["version"]) for v in VARS})),
         ta_range="{:.4g}..{:.4g}".format(*o["ta"].get("range", {}).get("ta", (np.nan, np.nan))),
         hus_min="{:.3g}".format(o["hus"].get("range", {}).get("hus", (np.nan,))[0]),
         status="OK" if not iss else f"{len(iss)} issues",
-        warnings="; ".join(sorted({f"{v}: {w}" for v in VARS for w in o[v].get("warnings", [])})))
+        warnings="; ".join(sorted(warns)))
     return row, [(model, exp, member, grid, *i) for i in iss]
 
 
