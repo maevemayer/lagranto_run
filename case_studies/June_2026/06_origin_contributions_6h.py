@@ -7,7 +7,8 @@ From the per-arrival lagrangian_terms_*.nc written by stage 05
 
   * exact ARRIVAL point : lon0, lat0, p0 (arrival_p)
   * TA                  : value at arrival + its genesis (TA_lon/lat/p_genesis,
-                          TA_genesis_step) = first TA sign-change back from arrival
+                          TA_genesis_step) = last point with the arrival sign of TA
+                          (whole trajectory if TA never flips)
   * each PROCESS (advection/adiabatic/diabatic/seasonal): the cumulative
     contribution at arrival + its OWN genesis (<proc>_lon/lat/p_genesis,
     <proc>_genesis_step). A process genesis is the LAST sign-change of that
@@ -45,29 +46,32 @@ def _at(da, s):
 
 
 def ta_genesis_step(TA):
-    """First TA sign-change going back from arrival (total-TA genesis)."""
-    TA0 = TA.sel(step=0).broadcast_like(TA)
-    sc = (TA * TA0 < 0).where(TA.step < 0)
-    arr = sc.sortby("step", ascending=False).fillna(False).astype(int)
-    return (arr.cumsum("step") == 1).idxmax("step").astype(int)
+    """TA genesis as in Hotz et al. (2024) and the colleague's tanom files: the
+    LAST point back from arrival that still has the arrival sign of TA (one step
+    after the first opposite sign). If TA never changes sign, the earliest valid
+    point, so the whole trajectory is integrated (her age = 360 h)."""
+    TA0 = TA.sel(step=0)
+    opp = (TA * TA0 < 0) & (TA.step < 0)
+    first_opp = TA.step.where(opp).max("step")
+    earliest = TA.step.where(TA.notnull()).min("step")
+    return xr.where(first_opp.notnull(), first_opp + 1, earliest).fillna(0).astype(int)
 
 
-def cumulative(ds, fss):
-    """Cumulative process contribution from the TA genesis to each step (K)."""
+def cumulative(ds, gen):
+    """Cumulative process contribution from the TA genesis to each step (K).
+    A term at step s is the interval (s-1 -> s): only steps after the genesis."""
     step2 = ds.step.broadcast_like(ds["TA"])
-    mask = (step2 >= fss.broadcast_like(ds["TA"])) & (step2 <= 0)
+    mask = (step2 > gen.broadcast_like(ds["TA"])) & (step2 <= 0)
     return {p: (ds[p].where(mask) * DELTA_T).fillna(0).cumsum("step").where(mask) for p in PROCS}
 
 
-def proc_genesis_step(cum_p, fss):
+def proc_genesis_step(cum_p, gen):
     """Per-process genesis: last sign-change of the cumulative contribution
     (closest to arrival); fall back to the TA genesis if it never flips."""
     sign = np.sign(cum_p)
-    change = (sign.diff("step") != 0)
+    change = (sign.diff("step") != 0) & sign.shift(step=1).notnull().isel(step=slice(1, None))
     last = change["step"].where(change).max("step")
-    firstv = cum_p["step"].where(cum_p.notnull()).min("step")
-    g = xr.where(last.isnull(), firstv, last)
-    return g.where(np.isfinite(g), fss).astype(int)
+    return last.fillna(gen).astype(int)
 
 
 def build_all(ds):
@@ -75,17 +79,19 @@ def build_all(ds):
     for v in ["lon", "lat", "p"]:
         ds[v] = ds[v].where(ds[v] != -999.0)               # mask LAGRANTO sentinels
     TA = ds["TA"]
-    fss = ta_genesis_step(TA)
-    cum = cumulative(ds, fss)
+    gen = ta_genesis_step(TA)
+    cum = cumulative(ds, gen)
     d = dict(
         lon0=_at(ds["lon"], 0), lat0=_at(ds["lat"], 0), p0=_at(ds["p"], 0), arrival_p=_at(ds["p"], 0),
         TA=_at(TA, 0),
-        TA_lon_genesis=_at(ds["lon"], fss), TA_lat_genesis=_at(ds["lat"], fss),
-        TA_p_genesis=_at(ds["p"], fss), TA_genesis_step=fss.astype("float32"),
+        TA_lon_genesis=_at(ds["lon"], gen), TA_lat_genesis=_at(ds["lat"], gen),
+        TA_p_genesis=_at(ds["p"], gen), TA_genesis_step=gen.astype("float32"),
     )
     for p in PROCS:
-        gp = proc_genesis_step(cum[p], fss)
-        d[p] = _at(cum[p], 0)                               # cumulative contribution at arrival
+        gp = proc_genesis_step(cum[p], gen)
+        # cumulative contribution at arrival; genesis AT arrival (TA flips in the
+        # first 6 h back) -> nothing to integrate, 0 K
+        d[p] = _at(cum[p], 0).where(gen < 0, xr.where(TA.sel(step=0).notnull(), 0.0, np.nan))
         d[f"{p}_lon_genesis"] = _at(ds["lon"], gp)
         d[f"{p}_lat_genesis"] = _at(ds["lat"], gp)
         d[f"{p}_p_genesis"] = _at(ds["p"], gp)

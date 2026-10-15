@@ -49,6 +49,26 @@ between the two without changing their sum or TA. Stage 05 stops if the
 gradient is not positive in 300-900 hPa (guards the +/- convention). Dropping
 the field also makes every S-file about a third smaller.
 
+## Genesis rule (Oct 2026): as in Hotz et al. (2024)
+
+Stages 05 and 06 integrate the processes from the TA genesis to arrival, with
+the genesis of the colleague's reference decomposition: the LAST point back
+from arrival that still has the arrival sign of TA. If TA never changes sign
+within 15 days, the whole trajectory is integrated (her age = 360 h). Before,
+the sum ran one 6-h interval past the FIRST opposite-sign point, and
+trajectories without a sign change (~6 %) got only the last 6 h, which dropped
+15 days of diabatic cooling for those air masses. Genesis at arrival (TA flips
+within the first 6 h) gives 0 K. Tested on 2026-05-27 12 UTC: our means match
+hers to 0.01 K (diabatic), 0.1 K (adiabatic), 0.25 K (advective). Results from
+before need stages 05 and 06 rerun (nothing else).
+
+## Winds: no cos(lat) fix needed on spiritx
+
+On Levante the DKRZ pool's spectral u/v (U*cos(lat), V*cos(lat)) went through
+`cdo sp2gp` without dividing out cos(lat), so the Levante winds were too weak.
+The `/proju` FLEXPART-input files hold u/v already gridded by MARS (not
+spectral, checked), so spiritx winds are correct and need no change.
+
 ## Arrival location for land masking
 
 Stage 06 (event **and** analogue) already writes the **exact arrival point**

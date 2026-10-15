@@ -103,20 +103,29 @@ def compute_lagrangian_terms(ds, kappa=0.286):
     return ds
 
 
+def ta_genesis_step(TA):
+    """TA genesis as in Hotz et al. (2024) and the colleague's tanom files: the
+    LAST point back from arrival that still has the arrival sign of TA (one step
+    after the first opposite sign). If TA never changes sign, the earliest valid
+    point, so the whole trajectory is integrated (her age = 360 h)."""
+    TA0 = TA.sel(step=0)
+    opp = (TA * TA0 < 0) & (TA.step < 0)
+    first_opp = TA.step.where(opp).max("step")
+    earliest = TA.step.where(TA.notnull()).min("step")
+    return xr.where(first_opp.notnull(), first_opp + 1, earliest).fillna(0).astype(int)
+
+
+def genesis_mask(ds):
+    """Intervals between the TA genesis and arrival. A term at step s is the
+    interval (s-1 -> s), so only steps after the genesis step are summed."""
+    step2 = ds.step.broadcast_like(ds["TA"])
+    gen = ta_genesis_step(ds["TA"]).broadcast_like(ds["TA"])
+    return (step2 > gen) & (step2 <= 0)
+
+
 def integrate_terms_to_sign_change_vectorized(ds, delta_t=3600.0 * 6,
                                               terms=("advection", "adiabatic", "diabatic", "seasonal")):
-    TA = ds["TA"]
-    TA0 = TA.sel(step=0).broadcast_like(TA)
-    sign_change = (TA * TA0 < 0)
-    sign_change = sign_change.where(TA.step < 0)
-    sorted_ds = sign_change.sortby("step", ascending=False)
-    arr = sorted_ds.fillna(False).astype(int)
-    cumsum = arr.cumsum("step")
-    first_mask = cumsum == 1
-    first_switch_step = first_mask.idxmax("step")
-    step_2d = ds.step.broadcast_like(TA)
-    step_end_broadcast = first_switch_step.broadcast_like(TA)
-    mask = (step_2d <= 0) & (step_2d >= step_end_broadcast)
+    mask = genesis_mask(ds)
     integrated_data = {}
     for term in terms:
         integrated_data[term] = ("traj_id", ds[term].where(mask).sum(dim="step").values * delta_t)
@@ -125,18 +134,7 @@ def integrate_terms_to_sign_change_vectorized(ds, delta_t=3600.0 * 6,
 
 def cumulative_terms_from_sign_change(ds, delta_t=6 * 3600.0,
                                       terms=("advection", "adiabatic", "diabatic", "seasonal")):
-    TA = ds["TA"]
-    TA0 = TA.sel(step=0).broadcast_like(TA)
-    sign_change = (TA * TA0 < 0)
-    sign_change = sign_change.where(TA.step < 0)
-    sorted_ds = sign_change.sortby("step", ascending=False)
-    arr = sorted_ds.fillna(False).astype(int)
-    cumsum = arr.cumsum("step")
-    first_mask = cumsum == 1
-    first_switch_step = first_mask.idxmax("step")
-    step_2d = ds.step.broadcast_like(TA)
-    step_end_broadcast = first_switch_step.broadcast_like(TA)
-    mask = (step_2d >= step_end_broadcast) & (step_2d <= 0)
+    mask = genesis_mask(ds)
     cum_integrated = {}
     for term in terms:
         vals = ds[term].where(mask) * delta_t
