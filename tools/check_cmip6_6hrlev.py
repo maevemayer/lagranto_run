@@ -34,6 +34,7 @@ issues_*.tsv.
 
   python check_cmip6_6hrlev.py [--quick|--best] [--activity CMIP] [--exp historical]
                                [--njobs 32] [--out DIR] [--only M1,M2]
+                               [--recheck M1,M2] [--fresh]
 """
 import argparse
 import fcntl
@@ -53,10 +54,11 @@ VARS = ("hus", "ta", "ua", "va")
 STEP = 0.25                                    # 6 h in days
 REF = "days since 1850-01-01 00:00:00"
 CAL_ALIAS = {"gregorian": "standard", "365_day": "noleap", "366_day": "all_leap"}
-# hard limits: outside = corrupt/garbage data (issue). Cold model tops (~120 K)
-# and negative hus from spectral models are real and only reported as warnings.
-RANGES = {"ta": (100., 350.), "hus": (-0.05, 0.1), "ua": (-250., 250.),
-          "va": (-250., 250.), "ps": (3.0e4, 1.15e5)}
+# hard limits: outside = corrupt/garbage data (issue). Models with tops near
+# 0.01 hPa reach ~95 K and >250 m/s in the mesosphere, and spectral models have
+# negative hus; those are real (negative hus is reported as a warning).
+RANGES = {"ta": (80., 350.), "hus": (-0.05, 0.1), "ua": (-400., 400.),
+          "va": (-400., 400.), "ps": (3.0e4, 1.15e5)}
 UNITS = {"ta": {"K"}, "hus": {"1", "kg kg-1", "kg/kg"}, "ua": {"m s-1", "m/s"},
          "va": {"m s-1", "m/s"}, "ps": {"Pa"}}
 
@@ -167,7 +169,8 @@ def pressure_profile(nc, terms, ps0=101325.):
             return None
     except Exception:
         return None
-    return p / 100.
+    p = np.asarray(p)
+    return p / 100. if p.ndim == 1 else None
 
 
 def vertical_terms(nc, levdim):
@@ -178,7 +181,12 @@ def vertical_terms(nc, levdim):
         return parse(lev.formula_terms), "formula_terms"
     for name, var in nc.variables.items():
         if "formula_terms" in var.ncattrs() and levdim in var.dimensions:
-            return parse(var.formula_terms), f"formula_terms on '{name}'"
+            terms = parse(var.formula_terms)
+            # on a bounds variable (CESM2: lev_bnds -> a_bnds, b_bnds): use the
+            # level-centre coefficients when the file has them
+            terms = {k: (n[:-5] if n.endswith("_bnds") and n[:-5] in nc.variables else n)
+                     for k, n in terms.items()}
+            return terms, f"formula_terms on '{name}'"
     for cand in ({"ap": "ap", "b": "b", "ps": "ps"}, {"a": "a", "b": "b", "p0": "p0", "ps": "ps"}):
         if all(n in nc.variables for n in cand.values()):
             return cand, "inferred from variable names"
@@ -186,16 +194,36 @@ def vertical_terms(nc, levdim):
 
 
 def coef_fingerprint(a):
-    """1-d coefficients in full, larger fields (orog) as mean/min/max."""
-    a = np.ma.getdata(np.asarray(a, "f8"))
-    return a.ravel().tolist() if a.ndim <= 1 else [float(a.mean()), float(a.min()), float(a.max())]
+    """1-d coefficients in full, larger fields (orog) as mean/min/max; masked
+    and fill values (|x| >= 1e19) become NaN and are ignored."""
+    a = np.ma.filled(np.ma.masked_invalid(np.ma.asarray(a, "f8")), np.nan)
+    a[np.abs(a) >= 1e19] = np.nan
+    if a.ndim <= 1:
+        return a.ravel().tolist()
+    if not np.isfinite(a).any():
+        return [np.nan, np.nan, np.nan]
+    return [float(np.nanmean(a)), float(np.nanmin(a)), float(np.nanmax(a))]
+
+
+def absmax(x):
+    x = np.abs(np.asarray(x, "f8"))
+    return float(np.nanmax(x)) if np.isfinite(x).any() else 0.
+
+
+def close(a, b):
+    return len(a) == len(b) and np.allclose(np.asarray(a, "f8"), np.asarray(b, "f8"), rtol=1e-5,
+                                            atol=1e-6 * max(1., absmax(a)), equal_nan=True)
 
 
 def coefs_close(x, y):
-    return x.keys() == y.keys() and all(
-        len(x[k]) == len(y[k]) and np.allclose(x[k], y[k], rtol=1e-5,
-                                               atol=1e-6 * max(1., np.abs(x[k]).max(initial=0.)))
-        for k in x)
+    return x.keys() == y.keys() and all(close(x[k], y[k]) for k in x)
+
+
+def maxdiff(a, b):
+    if a is None or b is None or len(a) != len(b):
+        return np.inf
+    d = np.abs(np.subtract(np.asarray(a, "f8"), np.asarray(b, "f8")))
+    return float(np.nanmax(d)) if np.isfinite(d).any() else 0.
 
 
 def atmos_component(source):
@@ -221,7 +249,7 @@ def scan_file(f, var, key, first, want_info):
     first: also sample the first timestep (first file of the variable).
     The time axis is stored as start + count unless it is irregular."""
     rec = dict(file=os.path.basename(f), issues=[], warns=[], cal=None, t0=None, n=0, irr=None,
-               levh=None, gridh=None, coef=None, stats={}, info=None)
+               levh=None, lev=None, gridh=None, coef=None, stats={}, info=None)
     issue = rec["issues"].append
     try:
         with netCDF4.Dataset(f) as nc:
@@ -251,6 +279,7 @@ def scan_file(f, var, key, first, want_info):
                 issue(f"no coordinate variable for vertical dim '{dims[1]}'")
             else:
                 rec["levh"] = hsh(levvar[:])
+                rec["lev"] = coef_fingerprint(levvar[:])
             if not terms:
                 issue("no formula_terms and no ap/b or a/b/p0 + ps variables: pressure not reconstructable")
             elif how != "formula_terms":
@@ -329,13 +358,15 @@ def list_var(key, vdir, var):
 def aggregate(var, recs, version):
     """Per-file records of one variable -> the variable's result."""
     out = dict(var=var, issues=[], warnings=[], files=len(recs), version=version, info={}, cal=set(),
-               levh=set(), coef=None, gridh=set(), t=None, seg=None)
+               levh=set(), lev=None, coef=None, gridh=set(), t=None, seg=None)
     issue = lambda f, msg: out["issues"].append((var, f or "-", msg))
     if not recs:
         issue(None, "no .nc files")
         return jsonable(out)
     warns = {}                                   # message -> number of files
     coef_diff = {}                               # term -> (files, max |diff|)
+    lev_diff = [0, 0.]                           # files, max |diff| of lev values
+    use_lev = all("lev" in r for r in recs)      # records written before lev values: hashes
     stats = {n: [np.inf, -np.inf, 0, 0] for n in (var, "ps")}
     tchunks = []
     for r in recs:
@@ -349,6 +380,12 @@ def aggregate(var, recs, version):
         for name in ("levh", "gridh"):
             if r[name] is not None:
                 out[name].add(r[name])
+        if use_lev and r["lev"] is not None:
+            if out["lev"] is None:
+                out["lev"] = r["lev"]
+            elif not close(r["lev"], out["lev"]):
+                lev_diff[0] += 1
+                lev_diff[1] = max(lev_diff[1], maxdiff(r["lev"], out["lev"]))
         if r["info"] and not out["info"]:
             out["info"] = r["info"]
         coefs = r["coef"] or {}
@@ -357,11 +394,9 @@ def aggregate(var, recs, version):
         else:
             for k in set(coefs) | set(out["coef"]):
                 a, b = coefs.get(k), out["coef"].get(k)
-                if a is None or b is None or not coefs_close({k: a}, {k: b}):
-                    d = (float(np.max(np.abs(np.subtract(a, b)))) if a is not None and b is not None
-                         and len(a) == len(b) else np.inf)
+                if a is None or b is None or not close(a, b):
                     n0, d0 = coef_diff.get(k, (0, 0.))
-                    coef_diff[k] = (n0 + 1, max(d0, d))
+                    coef_diff[k] = (n0 + 1, max(d0, maxdiff(a, b)))
         for n, (lo, hi, nm, nn) in r["stats"].items():
             s = stats[n]
             s[0], s[1], s[2], s[3] = min(s[0], lo), max(s[1], hi), s[2] + nm, s[3] + nn
@@ -369,11 +404,15 @@ def aggregate(var, recs, version):
             tchunks.append(np.asarray(r["irr"], "f8") if r["irr"] is not None
                            else r["t0"] + STEP * np.arange(r["n"]))
 
-    for name, label in (("cal", "calendars"), ("levh", "lev values"), ("gridh", "lat/lon")):
+    for name, label in (("cal", "calendars"), ("gridh", "lat/lon")) + ((("levh", "lev values"),)
+                                                                      if not use_lev else ()):
         if len(out[name]) > 1:
             issue(None, f"{label} differ between files ({len(out[name])} variants)")
+    if lev_diff[0]:
+        issue(None, f"lev values differ from the first file in {lev_diff[0]} files "
+                    f"(max |diff| {lev_diff[1]:.3g}, values up to {absmax(out['lev']):.4g})")
     for k, (n, d) in sorted(coef_diff.items()):
-        scale = np.abs(out["coef"].get(k, [np.nan])).max()
+        scale = absmax(out["coef"].get(k, [np.nan]))
         issue(None, f"vertical coefficient '{k}' differs from the first file in {n} files "
                     f"(max |diff| {d:.3g}, values up to {scale:.4g})")
     for n, (lo, hi, nmask, nnan) in stats.items():
@@ -471,7 +510,7 @@ class Checkpoint:
     with the same --activity/--exp/mode reuses everything recorded here.
     """
 
-    def __init__(self, path, fresh=False):
+    def __init__(self, path, fresh=False, recheck=()):
         self.path = path
         self.lock = open(path + ".lock", "w")
         try:
@@ -488,11 +527,21 @@ class Checkpoint:
                         r = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if "out" in r:
+                    if "drop" in r:             # an earlier --recheck: forget these models
+                        self.forget(r["drop"])
+                    elif "out" in r:
                         self.done[tuple(r["key"]), r["var"]] = r["out"]
                     else:
                         self.chunks[tuple(r["key"]), r["var"], r["chunk"]] = r["recs"]
         self.fh = open(path, "a")
+        if recheck:
+            self.forget(recheck)
+            self._write({"drop": sorted(recheck)})
+
+    def forget(self, models):
+        models = set(models)
+        self.done = {k: o for k, o in self.done.items() if k[0][0] not in models}
+        self.chunks = {k: o for k, o in self.chunks.items() if k[0][0] not in models}
 
     def _write(self, rec):
         self.fh.write(json.dumps(rec, default=lambda x: x.item() if hasattr(x, "item") else str(x)) + "\n")
@@ -592,9 +641,18 @@ def common_period(o):
 def assess(k, o):
     """One summary row + all issues for one model/experiment/member/grid."""
     model, exp, member, grid, inst, act = k
-    iss = [i for v in VARS for i in o[v]["issues"]]
+    iss = [i for v in VARS for i in o[v]["issues"] if " sampled range " not in i[2]]
+    for v in VARS:
+        for n, (lo, hi) in o[v].get("range", {}).items():
+            if n in RANGES and lo is not None and np.isfinite(lo) and (lo < RANGES[n][0] or hi > RANGES[n][1]):
+                iss.append((v, "-", f"{n}: sampled range {lo:.4g} .. {hi:.4g} outside {RANGES[n]}"))
     # the 4 variables must share grid, levels, coefficients, calendar and time axis
-    for name, label in (("gridh", "lat/lon"), ("levh", "lev values"), ("cal", "calendar")):
+    levs = [o[v].get("lev") for v in VARS]
+    lev_check = (("levh", "lev values"),) if any(lv is None for lv in levs) else ()
+    if not lev_check and any(not close(levs[0], lv) for lv in levs[1:]):
+        iss.append(("all", "-", "lev values differ between variables (max |diff| "
+                                f"{max(maxdiff(levs[0], lv) for lv in levs[1:]):.3g})"))
+    for name, label in (("gridh", "lat/lon"), ("cal", "calendar")) + lev_check:
         if len({frozenset(o[v][name]) for v in VARS}) > 1:
             iss.append(("all", "-", f"{label} differ between variables"))
     cs = [o[v]["coef"] for v in VARS if o[v].get("coef") is not None]
@@ -682,6 +740,8 @@ def main():
     ap.add_argument("--njobs", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 8)))
     ap.add_argument("--out", default=f"/homedata/{os.environ.get('USER', 'mmayer')}/cmip6_check")
     ap.add_argument("--only", default="", help="comma-separated model names")
+    ap.add_argument("--recheck", default="",
+                    help="comma-separated models whose earlier results are discarded and checked again")
     ap.add_argument("--fresh", action="store_true",
                     help="ignore the checkpoint of an earlier run and check everything again")
     args = ap.parse_args()
@@ -726,7 +786,13 @@ def main():
         print(f"\n-> {args.out}/{{matrix,summary}}_{tag}.tsv")
         return
 
-    ckpt = Checkpoint(os.path.join(args.out, f"checkpoint_{tag}.jsonl"), fresh=args.fresh)
+    recheck = set(filter(None, args.recheck.split(",")))
+    unknown = recheck - {k[0] for k in combos}
+    if unknown:
+        raise SystemExit(f"--recheck: no such model in this selection: {', '.join(sorted(unknown))}")
+    ckpt = Checkpoint(os.path.join(args.out, f"checkpoint_{tag}.jsonl"), fresh=args.fresh, recheck=recheck)
+    if recheck:
+        print(f"rechecking {', '.join(sorted(recheck))}: their earlier results are discarded", flush=True)
     if ckpt.done or ckpt.chunks:
         print(f"resuming from {ckpt.path}: {len(ckpt.done)} finished variable checks, "
               f"{len(ckpt.chunks)} finished chunks", flush=True)
