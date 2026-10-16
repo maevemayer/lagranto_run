@@ -18,17 +18,17 @@
 # Default 32 cores (half a zen4 node) starts much sooner than a full node;
 # for more:  sbatch --cpus-per-task=64 --mem=160G tools/check_cmip6_6hrlev.slurm ...
 #
-# Resuming: every finished check is saved to checkpoint_<tag>.jsonl in the
+# Resuming: every finished chunk of 20 files is saved to checkpoint_<tag>.jsonl in the
 # output dir. Resubmitting the same command skips what is already done.
 # 10 min before the time limit the job resubmits itself (at most
-# CMIP6CHK_MAXCHAIN=5 times), so a timeout continues on its own. A crash or
+# CMIP6CHK_MAXCHAIN=10 times), so a timeout continues on its own. A crash or
 # scancel does not resubmit; sbatch the same command again to resume.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 HERE="${SLURM_SUBMIT_DIR:-$(pwd)}"
 PYTHON="${CONDA_ENV:-/homedata/${USER}/conda/thesis}/bin/python"
 CHAIN="${CMIP6CHK_CHAIN:-0}"
-MAXCHAIN="${CMIP6CHK_MAXCHAIN:-5}"
+MAXCHAIN="${CMIP6CHK_MAXCHAIN:-10}"
 ARGS=("$@")
 
 resubmit() {

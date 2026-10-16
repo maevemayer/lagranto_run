@@ -213,118 +213,161 @@ def jsonable(out):
     return {k: sorted(v) if isinstance(v, set) else v for k, v in out.items()}
 
 
-def scan_var(key, vdir, var):
-    out = dict(var=var, issues=[], warnings=[], files=0, version=None, info={}, cal=set(),
-               levh=set(), coef=None, gridh=set(), t=None, seg=None)
-    issue = lambda f, msg: out["issues"].append((var, os.path.basename(f) if f else "-", msg))
-    warns = {}                                   # message -> number of files
-    warn = lambda msg: warns.__setitem__(msg, warns.get(msg, 0) + 1)
-    coef_diff = {}                               # term -> (files, max |diff|)
-    d, out["version"] = version_dir(os.path.join(vdir, var, key[3]))
+CHUNK = 20          # files per work unit: small enough to finish well inside a job
+
+
+def scan_file(f, var, key, first, want_info):
+    """Everything the check needs from one file, small and JSON-able.
+    first: also sample the first timestep (first file of the variable).
+    The time axis is stored as start + count unless it is irregular."""
+    rec = dict(file=os.path.basename(f), issues=[], warns=[], cal=None, t0=None, n=0, irr=None,
+               levh=None, gridh=None, coef=None, stats={}, info=None)
+    issue = rec["issues"].append
+    try:
+        with netCDF4.Dataset(f) as nc:
+            v = nc.variables[var]
+            tv = nc.variables["time"]
+            cal = CAL_ALIAS.get(getattr(tv, "calendar", "standard").lower(),
+                                getattr(tv, "calendar", "standard").lower())
+            dates = cftime.num2date(np.asarray(tv[:], "f8"), tv.units, cal)
+            days = np.asarray(cftime.date2num(dates, REF, cal), "f8")
+            nt = len(days)
+            if v.shape[0] != nt:
+                issue(f"{var} has {v.shape[0]} steps, time axis {nt}")
+            m = re.search(r"_(\d{8,12})-(\d{8,12})\.nc$", f)
+            if m and nt and (stamp(dates[0], len(m[1])) != m[1] or stamp(dates[-1], len(m[2])) != m[2]):
+                issue(f"filename {m[1]}-{m[2]} but time axis {dates[0]} .. {dates[-1]}")
+            if getattr(v, "units", "?") not in UNITS[var]:
+                issue(f"units '{getattr(v, 'units', '?')}'")
+
+            # horizontal grid
+            dims = v.dimensions
+            hdims = dims[2:]
+            rec["gridh"] = hsh(*[nc.variables[n][:] for n in ("lat", "lon") if n in nc.variables])
+            # vertical grid
+            levvar = nc.variables.get(dims[1])
+            terms, how = vertical_terms(nc, dims[1])
+            if levvar is None:
+                issue(f"no coordinate variable for vertical dim '{dims[1]}'")
+            else:
+                rec["levh"] = hsh(levvar[:])
+            if not terms:
+                issue("no formula_terms and no ap/b or a/b/p0 + ps variables: pressure not reconstructable")
+            elif how != "formula_terms":
+                rec["warns"].append(f"vertical coefficients {how}")
+            rec["coef"] = {}
+            for k, n in sorted(terms.items()):
+                if n not in nc.variables:
+                    issue(f"formula term {k}: '{n}' missing from file")
+                elif k != "ps":
+                    rec["coef"][k] = coef_fingerprint(nc.variables[n][...])
+            psname = terms.get("ps")
+            ps = nc.variables.get(psname) if psname else None
+            if ps is not None and ps.shape[0] != nt:
+                issue(f"ps has {ps.shape[0]} steps, time axis {nt}")
+
+            if want_info:
+                lat = np.asarray(nc.variables["lat"][:]) if "lat" in nc.variables else None
+                lon = np.asarray(nc.variables["lon"][:]) if "lon" in nc.variables else None
+                p = pressure_profile(nc, terms)
+                rec["info"] = dict(
+                    shape="x".join(str(nc.dimensions[h].size) for h in hdims),
+                    dlat=float(np.median(np.abs(np.diff(lat)))) if lat is not None and lat.ndim == 1 else np.nan,
+                    dlon=float(np.median(np.abs(np.diff(lon)))) if lon is not None and lon.ndim == 1 else np.nan,
+                    nlev=nc.dimensions[dims[1]].size,
+                    vcoord=getattr(levvar, "standard_name", "?") if levvar is not None else "?",
+                    ptop=float(p.min()) if p is not None else np.nan,
+                    pbot=float(p.max()) if p is not None else np.nan,
+                    order=("top->bottom" if p[0] < p[-1] else "bottom->top") if p is not None else "?",
+                    n200_1000=int(((p >= 200.) & (p <= 1000.)).sum()) if p is not None else "?",
+                    nominal=getattr(nc, "nominal_resolution", "?"),
+                    atmos=atmos_component(getattr(nc, "source", "")),
+                    grid_label=getattr(nc, "grid_label", key[3]),
+                    grid_desc=" ".join(str(getattr(nc, "grid", "?")).split()),
+                    hour0=f"{dates[0].hour:02d}" if nt else "?")
+
+            # sampled values: last step of every file (catches truncated files)
+            # plus the first step of the first file
+            for i in sorted(({0} if first else set()) | {nt - 1} - {-1}):
+                for n, vv in ((var, v), ("ps", ps)):
+                    if vv is None:
+                        continue
+                    try:
+                        a = vv[i]
+                    except Exception as e:
+                        issue(f"{n} unreadable at {dates[i]}: {type(e).__name__}: {e}")
+                        continue
+                    a = np.ma.masked_invalid(a) if not np.ma.isMaskedArray(a) else a
+                    s = rec["stats"].setdefault(n, [np.inf, -np.inf, 0, 0])   # min max nmasked nnan
+                    s[2] += int(np.ma.count_masked(a))
+                    s[3] += int(np.isnan(np.ma.getdata(a)).sum())
+                    if a.count():
+                        s[0], s[1] = min(s[0], float(a.min())), max(s[1], float(a.max()))
+            rec["cal"], rec["n"] = cal, nt
+            rec["t0"] = float(days[0]) if nt else None
+            if nt > 1 and np.any(np.abs(np.diff(days) - STEP) > 1e-4):
+                rec["irr"] = days.tolist()
+    except Exception as e:
+        issue(f"cannot open/read: {type(e).__name__}: {e}")
+    return rec
+
+
+def scan_chunk(key, var, cid, files, i0):
+    return key, var, cid, [scan_file(f, var, key, first=(i0 + i == 0), want_info=(i == 0))
+                           for i, f in enumerate(files)]
+
+
+def list_var(key, vdir, var):
+    """(version, sorted files, [(chunk id, first index, files)]) of one variable."""
+    d, ver = version_dir(os.path.join(vdir, var, key[3]))
     files = sorted(glob.glob(os.path.join(d, "*.nc"))) if d else []
-    out["files"] = len(files)
-    if not files:
+    chunks = [(f"{i}:{os.path.basename(files[i])}:{len(files[i:i + CHUNK])}", i, files[i:i + CHUNK])
+              for i in range(0, len(files), CHUNK)]
+    return ver, files, chunks
+
+
+def aggregate(var, recs, version):
+    """Per-file records of one variable -> the variable's result."""
+    out = dict(var=var, issues=[], warnings=[], files=len(recs), version=version, info={}, cal=set(),
+               levh=set(), coef=None, gridh=set(), t=None, seg=None)
+    issue = lambda f, msg: out["issues"].append((var, f or "-", msg))
+    if not recs:
         issue(None, "no .nc files")
-        return key, jsonable(out)
-    stats = {n: [np.inf, -np.inf, 0, 0] for n in (var, "ps")}   # min max nmasked nnan
+        return jsonable(out)
+    warns = {}                                   # message -> number of files
+    coef_diff = {}                               # term -> (files, max |diff|)
+    stats = {n: [np.inf, -np.inf, 0, 0] for n in (var, "ps")}
     tchunks = []
-    for fi, f in enumerate(files):
-        try:
-            with netCDF4.Dataset(f) as nc:
-                v = nc.variables[var]
-                tv = nc.variables["time"]
-                cal = CAL_ALIAS.get(getattr(tv, "calendar", "standard").lower(),
-                                    getattr(tv, "calendar", "standard").lower())
-                dates = cftime.num2date(np.asarray(tv[:], "f8"), tv.units, cal)
-                days = np.asarray(cftime.date2num(dates, REF, cal), "f8")
-                nt = len(days)
-                out["cal"].add(cal)
-                if v.shape[0] != nt:
-                    issue(f, f"{var} has {v.shape[0]} steps, time axis {nt}")
-                m = re.search(r"_(\d{8,12})-(\d{8,12})\.nc$", f)
-                if m and nt and (stamp(dates[0], len(m[1])) != m[1] or stamp(dates[-1], len(m[2])) != m[2]):
-                    issue(f, f"filename {m[1]}-{m[2]} but time axis {dates[0]} .. {dates[-1]}")
-                if getattr(v, "units", "?") not in UNITS[var]:
-                    issue(f, f"units '{getattr(v, 'units', '?')}'")
-
-                # horizontal grid
-                dims = v.dimensions
-                hdims = dims[2:]
-                hvars = [nc.variables[n][:] for n in ("lat", "lon") if n in nc.variables]
-                out["gridh"].add(hsh(*hvars))
-                # vertical grid
-                levvar = nc.variables.get(dims[1])
-                terms, how = vertical_terms(nc, dims[1])
-                if levvar is None:
-                    issue(f, f"no coordinate variable for vertical dim '{dims[1]}'")
-                else:
-                    out["levh"].add(hsh(levvar[:]))
-                if not terms:
-                    issue(f, "no formula_terms and no ap/b or a/b/p0 + ps variables: "
-                             "pressure not reconstructable")
-                elif how != "formula_terms":
-                    warn(f"vertical coefficients {how}")
-                coefs = {}
-                for k, n in sorted(terms.items()):
-                    if n not in nc.variables:
-                        issue(f, f"formula term {k}: '{n}' missing from file")
-                    elif k != "ps":
-                        coefs[k] = coef_fingerprint(nc.variables[n][...])
-                if out["coef"] is None:
-                    out["coef"] = coefs
-                else:
-                    for k in set(coefs) | set(out["coef"]):
-                        a, b = coefs.get(k), out["coef"].get(k)
-                        if a is None or b is None or not coefs_close({k: a}, {k: b}):
-                            d = (float(np.max(np.abs(np.subtract(a, b)))) if a is not None and b is not None
-                                 and len(a) == len(b) else np.inf)
-                            n0, d0 = coef_diff.get(k, (0, 0.))
-                            coef_diff[k] = (n0 + 1, max(d0, d))
-                psname = terms.get("ps")
-                ps = nc.variables.get(psname) if psname else None
-                if ps is not None and ps.shape[0] != nt:
-                    issue(f, f"ps has {ps.shape[0]} steps, time axis {nt}")
-
-                if not out["info"]:
-                    lat = np.asarray(nc.variables["lat"][:]) if "lat" in nc.variables else None
-                    lon = np.asarray(nc.variables["lon"][:]) if "lon" in nc.variables else None
-                    p = pressure_profile(nc, terms)
-                    out["info"] = dict(
-                        shape="x".join(str(nc.dimensions[h].size) for h in hdims),
-                        dlat=float(np.median(np.abs(np.diff(lat)))) if lat is not None and lat.ndim == 1 else np.nan,
-                        dlon=float(np.median(np.abs(np.diff(lon)))) if lon is not None and lon.ndim == 1 else np.nan,
-                        nlev=nc.dimensions[dims[1]].size,
-                        vcoord=getattr(levvar, "standard_name", "?") if levvar is not None else "?",
-                        ptop=float(p.min()) if p is not None else np.nan,
-                        pbot=float(p.max()) if p is not None else np.nan,
-                        order=("top->bottom" if p[0] < p[-1] else "bottom->top") if p is not None else "?",
-                        n200_1000=int(((p >= 200.) & (p <= 1000.)).sum()) if p is not None else "?",
-                        nominal=getattr(nc, "nominal_resolution", "?"),
-                        atmos=atmos_component(getattr(nc, "source", "")),
-                        grid_label=getattr(nc, "grid_label", key[3]),
-                        grid_desc=" ".join(str(getattr(nc, "grid", "?")).split()),
-                        hour0=f"{dates[0].hour:02d}" if nt else "?")
-
-                # sampled values: last step of every file (catches truncated files)
-                # plus the first step of the first file
-                for i in sorted(({0} if fi == 0 else set()) | {nt - 1} - {-1}):
-                    for n, vv in ((var, v), ("ps", ps)):
-                        if vv is None:
-                            continue
-                        try:
-                            a = vv[i]
-                        except Exception as e:
-                            issue(f, f"{n} unreadable at {dates[i]}: {type(e).__name__}: {e}")
-                            continue
-                        a = np.ma.masked_invalid(a) if not np.ma.isMaskedArray(a) else a
-                        s = stats[n]
-                        s[2] += int(np.ma.count_masked(a))
-                        s[3] += int(np.isnan(np.ma.getdata(a)).sum())
-                        if a.count():
-                            s[0], s[1] = min(s[0], float(a.min())), max(s[1], float(a.max()))
-                tchunks.append(days)
-        except Exception as e:
-            issue(f, f"cannot open/read: {type(e).__name__}: {e}")
+    for r in recs:
+        for m in r["issues"]:
+            issue(r["file"], m)
+        for m in r["warns"]:
+            warns[m] = warns.get(m, 0) + 1
+        if r["cal"] is None:                     # unreadable file, already an issue
+            continue
+        out["cal"].add(r["cal"])
+        for name in ("levh", "gridh"):
+            if r[name] is not None:
+                out[name].add(r[name])
+        if r["info"] and not out["info"]:
+            out["info"] = r["info"]
+        coefs = r["coef"] or {}
+        if out["coef"] is None:
+            out["coef"] = coefs
+        else:
+            for k in set(coefs) | set(out["coef"]):
+                a, b = coefs.get(k), out["coef"].get(k)
+                if a is None or b is None or not coefs_close({k: a}, {k: b}):
+                    d = (float(np.max(np.abs(np.subtract(a, b)))) if a is not None and b is not None
+                         and len(a) == len(b) else np.inf)
+                    n0, d0 = coef_diff.get(k, (0, 0.))
+                    coef_diff[k] = (n0 + 1, max(d0, d))
+        for n, (lo, hi, nm, nn) in r["stats"].items():
+            s = stats[n]
+            s[0], s[1], s[2], s[3] = min(s[0], lo), max(s[1], hi), s[2] + nm, s[3] + nn
+        if r["n"]:
+            tchunks.append(np.asarray(r["irr"], "f8") if r["irr"] is not None
+                           else r["t0"] + STEP * np.arange(r["n"]))
 
     for name, label in (("cal", "calendars"), ("levh", "lev values"), ("gridh", "lat/lon")):
         if len(out[name]) > 1:
@@ -341,9 +384,9 @@ def scan_var(key, vdir, var):
         if lo < RANGES[n][0] or hi > RANGES[n][1]:
             issue(None, f"{n}: sampled range {lo:.4g} .. {hi:.4g} outside {RANGES[n]}")
     if var == "hus" and stats["hus"][0] < 0:
-        warn(f"negative hus in sampled steps (min {stats['hus'][0]:.3g})")
+        warns[f"negative hus in sampled steps (min {stats['hus'][0]:.3g})"] = 1
     out["range"] = {n: (s[0], s[1]) for n, s in stats.items()}
-    out["warnings"] = [f"{m} ({n}/{len(files)} files)" for m, n in sorted(warns.items())]
+    out["warnings"] = [f"{m} ({n}/{len(recs)} files)" for m, n in sorted(warns.items())]
 
     if tchunks:
         t = np.concatenate(tchunks)
@@ -371,7 +414,7 @@ def scan_var(key, vdir, var):
         hi = np.r_[cuts, len(t) - 1]
         j = int(np.argmax(t[hi] - t[lo]))
         out["seg"] = (fmt(lo[j]), fmt(hi[j]), float((t[hi[j]] - t[lo[j]] + STEP) / ylen))
-    return key, jsonable(out)
+    return jsonable(out)
 
 
 def regrid_status(model, label):
@@ -419,11 +462,13 @@ def matrix_table(rows, out, tag, cell):
 
 
 class Checkpoint:
-    """Append-only JSON-lines record of finished (member, variable) checks.
+    """Append-only JSON-lines record of finished work.
 
-    Every result is flushed to disk as soon as it arrives, so a job that times
-    out, crashes or is cancelled loses only the checks still running; the next
-    run with the same --activity/--exp/mode reuses everything recorded here.
+    Two kinds of line: {"key", "var", "chunk", "recs"} for every finished
+    chunk of CHUNK files, and {"key", "var", "out"} once a whole variable is
+    done. Each line is flushed as soon as it arrives, so a job that times out,
+    crashes or is cancelled loses only the chunks still running; the next run
+    with the same --activity/--exp/mode reuses everything recorded here.
     """
 
     def __init__(self, path, fresh=False):
@@ -435,7 +480,7 @@ class Checkpoint:
             raise SystemExit(f"another run is using {path}; wait for it or scancel it first")
         if fresh and os.path.exists(path):
             os.remove(path)
-        self.done = {}
+        self.done, self.chunks = {}, {}
         if os.path.exists(path):
             with open(path) as fh:
                 for line in fh:
@@ -443,38 +488,79 @@ class Checkpoint:
                         r = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    self.done[tuple(r["key"]), r["var"]] = r["out"]
+                    if "out" in r:
+                        self.done[tuple(r["key"]), r["var"]] = r["out"]
+                    else:
+                        self.chunks[tuple(r["key"]), r["var"], r["chunk"]] = r["recs"]
         self.fh = open(path, "a")
 
-    def add(self, k, o):
-        self.done[k, o["var"]] = o
-        self.fh.write(json.dumps({"key": k, "var": o["var"], "out": o},
-                                 default=lambda x: x.item() if hasattr(x, "item") else str(x)) + "\n")
+    def _write(self, rec):
+        self.fh.write(json.dumps(rec, default=lambda x: x.item() if hasattr(x, "item") else str(x)) + "\n")
         self.fh.flush()
         os.fsync(self.fh.fileno())
 
+    def add(self, k, o):
+        self.done[k, o["var"]] = o
+        self._write({"key": k, "var": o["var"], "out": o})
 
-def run(func, combos, njobs, thread=False, verbose=True, ckpt=None):
+    def add_chunk(self, k, var, cid, recs):
+        self.chunks[k, var, cid] = recs
+        self._write({"key": k, "var": var, "chunk": cid, "recs": recs})
+
+
+def run(func, combos, njobs, thread=False, verbose=True):
     res = {k: {} for k in combos}
+    with (ThreadPoolExecutor if thread else ProcessPoolExecutor)(njobs) as ex:
+        futs = [ex.submit(func, k, d, v) for k, d, v in
+                ((k, d, v) for k, d in combos.items() for v in VARS)]
+        for fu in as_completed(futs):
+            k, o = fu.result()
+            res[k][o["var"]] = o
+    return res
+
+
+def run_full(combos, njobs, ckpt):
+    """Full check of every variable of every member in combos, in chunks of
+    CHUNK files spread over all workers, resuming from the checkpoint."""
+    res = {k: {} for k in combos}
+    pending = {}                                 # (k, var) -> (version, [chunk ids])
     todo = []
     for k, d in combos.items():
         for v in VARS:
-            if ckpt is not None and (k, v) in ckpt.done:
+            if (k, v) in ckpt.done:
                 res[k][v] = ckpt.done[k, v]
-            else:
-                todo.append((k, d, v))
-    if verbose and len(todo) < len(VARS) * len(combos):
-        print(f"  {len(VARS) * len(combos) - len(todo)} variable checks taken from {ckpt.path}", flush=True)
-    with (ThreadPoolExecutor if thread else ProcessPoolExecutor)(njobs) as ex:
-        futs = [ex.submit(func, k, d, v) for k, d, v in todo]
+                continue
+            ver, files, chunks = list_var(k, d, v)
+            pending[k, v] = (ver, [cid for cid, _, _ in chunks])
+            todo += [(k, v, cid, fs, i0) for cid, i0, fs in chunks if (k, v, cid) not in ckpt.chunks]
+    nreused = len(VARS) * len(combos) - len(pending)
+    nchunks = sum(len(c) for _, c in pending.values())
+    print(f"  {nreused} variable checks taken from the checkpoint; {len(pending)} to do in "
+          f"{nchunks} chunks of up to {CHUNK} files, {nchunks - len(todo)} of them already done",
+          flush=True)
+
+    def finish(k, v):                            # all chunks of (k, v) there -> aggregate
+        ver, cids = pending[k, v]
+        if all((k, v, c) in ckpt.chunks for c in cids):
+            o = aggregate(v, [r for c in cids for r in ckpt.chunks[k, v, c]], ver)
+            res[k][v] = o
+            ckpt.add(k, o)
+            del pending[k, v]
+            print(f"  done: {k[0]} {k[1]} {k[2]} {v}: {o['files']} files, {len(o['issues'])} issues",
+                  flush=True)
+
+    for k, v in list(pending):                   # finished chunks but never aggregated
+        finish(k, v)
+    # largest variables first so the long tail runs in parallel with the small ones
+    todo.sort(key=lambda t: -len(pending[t[0], t[1]][1]))
+    with ProcessPoolExecutor(njobs) as ex:
+        futs = [ex.submit(scan_chunk, k, v, cid, fs, i0) for k, v, cid, fs, i0 in todo]
         for n, fu in enumerate(as_completed(futs), 1):
-            k, o = fu.result()
-            res[k][o["var"]] = o
-            if ckpt is not None:
-                ckpt.add(k, o)
-            if verbose:
-                print(f"  [{n}/{len(futs)}] {k[0]} {k[1]} {k[2]} {o['var']}: {o['files']} files, "
-                      f"{len(o['issues'])} issues", flush=True)
+            k, v, cid, recs = fu.result()
+            ckpt.add_chunk(k, v, cid, recs)
+            if n % 25 == 0 or n == len(futs):
+                print(f"  [{n}/{len(futs)} chunks] last: {k[0]} {k[1]} {k[2]} {v}", flush=True)
+            finish(k, v)
     return res
 
 
@@ -641,8 +727,9 @@ def main():
         return
 
     ckpt = Checkpoint(os.path.join(args.out, f"checkpoint_{tag}.jsonl"), fresh=args.fresh)
-    if ckpt.done:
-        print(f"resuming: {len(ckpt.done)} finished variable checks in {ckpt.path}", flush=True)
+    if ckpt.done or ckpt.chunks:
+        print(f"resuming from {ckpt.path}: {len(ckpt.done)} finished variable checks, "
+              f"{len(ckpt.chunks)} finished chunks", flush=True)
     rows, issues = [], []
     if args.best:
         cand = {}
@@ -655,7 +742,7 @@ def main():
             rnd += 1
             batch = {e: ks.pop(0) for e, ks in pending.items()}
             print(f"\nround {rnd}: checking {len(batch)} members", flush=True)
-            res = run(scan_var, {k: combos[k] for k in batch.values()}, args.njobs, ckpt=ckpt)
+            res = run_full({k: combos[k] for k in batch.values()}, args.njobs, ckpt)
             for e, k in batch.items():
                 row, iss = assess(k, res[k])
                 rows.append(row)
@@ -664,7 +751,7 @@ def main():
                     del pending[e]
         rows.sort(key=lambda r: (r["model"].lower(), exp_order(r["experiment"]), natural(r["member"])))
     else:
-        res = run(scan_var, combos, args.njobs, ckpt=ckpt)
+        res = run_full(combos, args.njobs, ckpt)
         for k in order(res):
             row, iss = assess(k, res[k])
             rows.append(row)
