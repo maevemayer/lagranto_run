@@ -31,6 +31,17 @@ PYTHON="${CONDA_ENV:-/homedata/${USER}/conda/thesis}/bin/python"
 CHAIN="${CMIP6CHK_CHAIN:-0}"
 MAXCHAIN="${CMIP6CHK_MAXCHAIN:-10}"
 ARGS=("$@")
+# continuations resume: drop --fresh and --recheck (they would discard progress again)
+CONT=()
+skip=0
+for a in ${ARGS[@]+"${ARGS[@]}"}; do
+    if (( skip )); then skip=0; continue; fi
+    case "$a" in
+        --fresh|--recheck=*) ;;
+        --recheck) skip=1 ;;
+        *) CONT+=("$a") ;;
+    esac
+done
 
 resubmit() {
     if (( CHAIN < MAXCHAIN )); then
@@ -38,7 +49,7 @@ resubmit() {
         sbatch --dependency=afterany:"${SLURM_JOB_ID}" --chdir="${HERE}" \
                --cpus-per-task="${SLURM_CPUS_PER_TASK:-32}" --mem="${SLURM_MEM_PER_NODE:-98304}M" \
                --export=ALL,CMIP6CHK_CHAIN=$((CHAIN + 1)) \
-               "${HERE}/tools/check_cmip6_6hrlev.slurm" ${ARGS[@]+"${ARGS[@]}"}
+               "${HERE}/tools/check_cmip6_6hrlev.slurm" ${CONT[@]+"${CONT[@]}"}
         echo "time limit near: continuation $((CHAIN + 1))/${MAXCHAIN} queued, it resumes from the checkpoint"
     else
         echo "time limit near: ${MAXCHAIN} continuations used, sbatch the same command again to resume"
