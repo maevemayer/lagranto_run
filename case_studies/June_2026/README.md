@@ -198,6 +198,30 @@ Do **not** use a low top like `70/137` (~250 hPa): it would clip the 200 hPa
 starts (`@profile(ARRIVAL_P_BOTTOM,ARRIVAL_P_TOP,ARRIVAL_NLEV)`, default
 1000,200,17) and air that ascends into the UTLS.
 
+## Resolution experiments (`submit_resolution_experiment.sh`)
+
+New, separate runs from the P/S files of an existing run, with fewer model
+levels and optionally a coarser grid (the source run is only read):
+
+    ./submit_resolution_experiment.sh 2022_July/corrected_6h 60        # -> 2022_July/L60_1deg
+    ./submit_resolution_experiment.sh 2022_July/corrected_6h 30        # -> 2022_July/L30_1deg
+    ./submit_resolution_experiment.sh 2022_July/corrected_6h 60 1.5    # -> 2022_July/L60_1p5deg
+    ./submit_resolution_experiment.sh 2022_July/corrected_6h 30 2      # -> 2022_July/L30_2deg
+
+* Vertical: 60 or 30 of the ERA5 L137 model levels below ~100 hPa (levels
+  61-137, level 61 = 104 hPa at a 1013 hPa surface), thinned evenly in level
+  index so the L137 spacing (dense near the ground) is kept (`cdo sellevel`;
+  lists in `reduce_resolution.py`). 30 levels: ~40 hPa spacing at 850 hPa,
+  ~60 hPa at 500 hPa (L137: 14 and 20 hPa).
+* Horizontal (optional): `cdo remapcon` to a regular RES x RES grid, 0-90N,
+  after the level selection (both are linear, the order does not matter).
+* Written back in the LAGRANTO layout (`lagranto_io`), coefficients of the
+  source; `p`/`dp` recomputed from the reduced/regridded surface pressure.
+* Then stages 04-06 as usual into the new run's folders. Same arrival box,
+  levels and times (config.sh), i.e. the same start points as the source run.
+* Check one file first (login node, after `source config.sh`):
+  `$PYTHON reduce_resolution.py SRC_DATA_DIR /scratchx/$USER/lagranto_run/test_reduce --nlev 30 --res 2 --test`
+
 ## Rough cost (Levante numbers; spiritx not yet measured)
 
 Anchored to the Levante logs (`pfiles-rank17` 0.64; `tclim-rank20` 1.9 for 6/22 dates
