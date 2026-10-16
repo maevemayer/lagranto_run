@@ -74,20 +74,34 @@ def reduce_file(args):
     with xr.open_dataset(src_path) as src0:
         src = src0.load()
     has_p = "p" in src
+    # cdo gets the gridded fields only (p/dp have the LAGRANTO dim order, which
+    # cdo does not read; they are recomputed below). sellevel drops every field
+    # without the selected levels, so 3-D fields (sellevel [+ remapcon]) and
+    # 2-D fields like PS (remapcon only) go through cdo separately.
+    cin = src.drop_vars([v for v in ("p", "dp", *COEFFS) if v in src])
+    v3 = [v for v in cin.data_vars if "lev" in cin[v].dims]
+    v2 = [v for v in cin.data_vars if "lev" not in cin[v].dims]
+    parts = []
     with tempfile.TemporaryDirectory(dir=os.path.dirname(dst_path)) as tmp:
-        f0, f1 = os.path.join(tmp, "in.nc"), os.path.join(tmp, "out.nc")
-        # cdo gets the 4-D fields only (p/dp have the LAGRANTO dim order, which
-        # cdo does not read; they are recomputed below)
-        # plain level axis for cdo: the model level number (selected by value)
-        cin = src.drop_vars([v for v in ("p", "dp", *COEFFS) if v in src])
-        cin["lev"].attrs = {"axis": "Z", "long_name": "model level number"}
-        cin.to_netcdf(f0)
-        ops = ["-sellevel," + ",".join(map(str, levels)), f0]
-        if grid:
-            ops = [f"-remapcon,{grid}"] + ops
-        subprocess.run([CDO, "-s", "-O", "-f", "nc4", *ops, f1], check=True)
-        with xr.open_dataset(f1) as r0:
-            red = r0.load()
+        for names, sel in ((v3, True), (v2, False)):
+            if not names:
+                continue
+            part = cin[names]
+            if sel:                                   # plain level axis: the model level number (selected by value)
+                part["lev"].attrs = {"axis": "Z", "long_name": "model level number"}
+            else:
+                part = part.drop_vars("lev", errors="ignore")
+            if not sel and not grid:                  # 2-D and no regrid: unchanged
+                parts.append(part)
+                continue
+            f0, f1 = os.path.join(tmp, f"in{int(sel)}.nc"), os.path.join(tmp, f"out{int(sel)}.nc")
+            part.to_netcdf(f0)
+            ops = ([f"-remapcon,{grid}"] if grid else []) + (["-sellevel," + ",".join(map(str, levels))] if sel else [])
+            subprocess.run([CDO, "-s", "-O", "-f", "nc4", *ops, f0, f1], check=True)
+            with xr.open_dataset(f1) as r0:
+                parts.append(r0.load())
+    parts = [x.drop_vars([v for v in x.variables if v.endswith("_bnds")], errors="ignore") for x in parts]
+    red = xr.merge(parts, join="override", compat="override")
     red = red.drop_vars([v for v in red.variables if v.endswith("_bnds") or v in COEFFS], errors="ignore")
     keep_lev = red["lev"].values.astype(int)
     if list(keep_lev) != list(levels):
