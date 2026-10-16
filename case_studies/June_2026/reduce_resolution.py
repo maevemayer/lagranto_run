@@ -74,6 +74,7 @@ def reduce_file(args):
     with xr.open_dataset(src_path) as src0:
         src = src0.load()
     has_p = "p" in src
+    coord_attrs = {c: dict(src[c].attrs) for c in ("lat", "lon", "lev")}   # before anything touches them
     # cdo gets the gridded fields only (p/dp have the LAGRANTO dim order, which
     # cdo does not read; they are recomputed below). sellevel drops every field
     # without the selected levels, so 3-D fields (sellevel [+ remapcon]) and
@@ -87,8 +88,8 @@ def reduce_file(args):
             if not names:
                 continue
             part = cin[names]
-            if sel:                                   # plain level axis: the model level number (selected by value)
-                part["lev"].attrs = {"axis": "Z", "long_name": "model level number"}
+            if sel:                                   # plain level axis (own variable, not shared with src): selected by value
+                part = part.assign_coords(lev=("lev", part["lev"].values.copy(), {"axis": "Z", "long_name": "model level number"}))
             else:
                 part = part.drop_vars("lev", errors="ignore")
             if not sel and not grid:                  # 2-D and no regrid: unchanged
@@ -114,7 +115,7 @@ def reduce_file(args):
         out[v] = out[v].astype(src[v].dtype)
         out[v].attrs = src[v].attrs
     for c in ("lat", "lon", "lev"):
-        out[c].attrs = src[c].attrs
+        out[c].attrs = coord_attrs[c]
     for v in COEFFS:                                                 # full coefficient arrays, as in the source
         if v in src:
             out[v] = src[v]
@@ -125,6 +126,8 @@ def reduce_file(args):
         out["dp"] = dp.assign_coords(time=out.time, lat=out.lat, lon=out.lon, lev=out.lev).astype(src["dp"].dtype)
         out["p"].attrs, out["dp"].attrs = src["p"].attrs, src["dp"].attrs
     out = out[[v for v in src.data_vars if v in out]]                # source variable order
+    for c in ("lat", "lon", "lev"):                                  # coordinate attributes of the source: LAGRANTO
+        out[c].attrs = coord_attrs[c]                                # needs lev:standard_name/formula_terms
     out.attrs = dict(src.attrs, reduced_resolution=f"model levels {','.join(map(str, levels))}"
                      + (f"; cdo remapcon to {os.path.basename(grid)}" if grid else ""))
     tmp_out = dst_path + ".tmp"
@@ -157,6 +160,10 @@ def check(src_path, dst_path, levels, res):
         hybm = np.asarray(b["hybm"].values).reshape(-1, b["hybm"].shape[-1])[0]
         pp = hyam[lev] + hybm[lev] * b["PS"].values[..., None] * 100
         print(f"  p consistent with hyam/hybm and PS: max diff {float(np.abs(b['p'].values - pp).max()):.3g} Pa")
+    for c in ("lev", "lat", "lon"):
+        ok = a[c].attrs == b[c].attrs
+        print(f"  {c} attributes as in the source: {ok}" + ("" if ok else f"  source {a[c].attrs}  reduced {b[c].attrs}"))
+        assert ok, f"{c} attributes differ"
     print(f"  time {b['time'].values}  units {b['time'].encoding.get('units')}")
 
 
