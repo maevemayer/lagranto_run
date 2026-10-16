@@ -215,8 +215,13 @@ levels and optionally a coarser grid (the source run is only read):
   ~60 hPa at 500 hPa (L137: 14 and 20 hPa).
 * Horizontal (optional): `cdo remapcon` to a regular RES x RES grid, 0-90N,
   after the level selection (both are linear, the order does not matter).
-* Written back in the LAGRANTO layout (`lagranto_io`), coefficients of the
-  source; `p`/`dp` recomputed from the reduced/regridded surface pressure.
+* Written back in the LAGRANTO layout (`lagranto_io`) with lev = 1..N and the
+  hybrid coefficients of the kept levels only (N mid-levels, N+1 interfaces).
+  LAGRANTO ignores the lev values and takes the pressure of the N levels in a
+  file from the bottom-most N coefficients: with the full 137 coefficients a
+  30-level file would end at ~750 hPa (that is fine for a contiguous block like
+  18/137, which is why the normal runs are unaffected). `p` is unchanged, `dp`
+  is the coarse-layer thickness, both from the reduced/regridded surface pressure.
 * Then stages 04-06 as usual into the new run's folders. Same arrival box,
   levels and times (config.sh), i.e. the same start points as the source run.
 * Check one file first (login node, after `source config.sh`):

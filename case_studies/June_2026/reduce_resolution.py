@@ -8,10 +8,16 @@ Two steps per file, both with cdo:
 Both are linear and act per level / per column, so the order does not change
 the result; levels are reduced first.
 
-The output is written back in the layout LAGRANTO reads (lagranto_io), with
-the hybrid coefficients of the source file, and p/dp (P-files only)
-recomputed from the reduced/regridded surface pressure with the stage 01
-formula (level k: p = hyam[k] + hybm[k]*ps, dp = interfaces k+1 minus k).
+The output is written back in the layout LAGRANTO reads (lagranto_io).
+LAGRANTO ignores the lev values and takes the pressure of the N levels in a
+file from the bottom-most N hybrid coefficients (fine for a contiguous block
+like 18/137, wrong for levels with gaps: a 30-level file would end at ~750 hPa).
+So the reduced files carry coefficients of the kept levels only: hyam/hybm of
+those levels (values unchanged), hyai/hybi = N+1 interfaces taken from the
+original ones (top of the uppermost kept level, an original interface between
+each pair of kept levels, the surface), and lev = 1..N. p is unchanged, dp is
+the thickness of the coarse layers; both are recomputed from the reduced /
+regridded surface pressure.
 
 Usage (source config.sh first, or run via reduce_resolution.slurm):
     python reduce_resolution.py SRC_DATA_DIR DST_DATA_DIR --nlev 60|30 [--res 1.5|2] [--jobs 16]
@@ -53,14 +59,32 @@ def gridfile(res, path):
     return path
 
 
-def p_dp(src, ps_hpa):
-    """Stage 01 formula on the kept levels; ps in hPa (P-file PS)."""
-    lev = src["lev"].values.astype(int); k = lev - 1
+def coef1d(ds, name):
+    """1-D coefficient array, also if stored as (time, n)."""
+    return np.asarray(ds[name].values).reshape(-1, ds[name].shape[-1])[0]
+
+
+def reduced_coeffs(src, levels):
+    """Coefficients of the kept model levels (1-based numbers in `levels`)."""
+    k = np.asarray(levels) - 1
+    out = {}
+    if "hyam" in src:
+        out["hyam"], out["hybm"] = coef1d(src, "hyam")[k], coef1d(src, "hybm")[k]
+    if "hyai" in src:
+        # interfaces: top of level k[0]; between kept levels j, j+1 the original
+        # interface in the middle of the gap (= the shared one if adjacent); surface
+        mid = [(k[j] + 1 + k[j + 1]) // 2 for j in range(len(k) - 1)]
+        idx = np.array([k[0], *mid, k[-1] + 1])
+        out["hyai"], out["hybi"] = coef1d(src, "hyai")[idx], coef1d(src, "hybi")[idx]
+    return out
+
+
+def p_dp(c, ps_hpa):
+    """Stage 01 formula with the reduced coefficients (level j = lev j+1); ps in hPa (P-file PS)."""
     ps = ps_hpa * 100.0
-    c = {n: np.asarray(src[n].values).reshape(-1, src[n].shape[-1])[0] for n in COEFFS}   # 1-D, also if (time, n)
-    am, bm = c["hyam"][k], c["hybm"][k]
-    at, bt = c["hyai"][k], c["hybi"][k]
-    ab, bb = c["hyai"][k + 1], c["hybi"][k + 1]
+    am, bm = c["hyam"], c["hybm"]
+    at, bt = c["hyai"][:-1], c["hybi"][:-1]
+    ab, bb = c["hyai"][1:], c["hybi"][1:]
     ps4 = ps.values[..., None]                                       # (time, lat, lon, 1)
     p = am + bm * ps4
     dp = (ab + bb * ps4) - (at + bt * ps4)
@@ -116,12 +140,12 @@ def reduce_file(args):
         out[v].attrs = src[v].attrs
     for c in ("lat", "lon", "lev"):
         out[c].attrs = coord_attrs[c]
-    for v in COEFFS:                                                 # full coefficient arrays, as in the source
-        if v in src:
-            out[v] = src[v]
+    c = reduced_coeffs(src, levels)                                  # coefficients of the kept levels only
+    for v, arr in c.items():
+        out[v] = (("nhym",) if v in ("hyam", "hybm") else ("nhyi",), arr, src[v].attrs)
+    out = out.assign_coords(lev=np.arange(1, len(levels) + 1).astype(src["lev"].dtype))   # lev = 1..N
     if has_p:
-        out = out.assign_coords(lev=red["lev"].values.astype(src["lev"].dtype))
-        p, dp = p_dp(src.sel(lev=out["lev"].values), out["PS"])
+        p, dp = p_dp(c, out["PS"])
         out["p"] = p.assign_coords(time=out.time, lat=out.lat, lon=out.lon, lev=out.lev).astype(src["p"].dtype)
         out["dp"] = dp.assign_coords(time=out.time, lat=out.lat, lon=out.lon, lev=out.lev).astype(src["dp"].dtype)
         out["p"].attrs, out["dp"].attrs = src["p"].attrs, src["dp"].attrs
@@ -141,25 +165,42 @@ def check(src_path, dst_path, levels, res):
     a, b = xr.open_dataset(src_path), xr.open_dataset(dst_path)
     print(f"\n{os.path.basename(dst_path)}: {dict(b.sizes)}")
     print(f"  variables: {list(b.data_vars)}  (source: {list(a.data_vars)})")
-    assert list(b["lev"].values.astype(int)) == list(levels), "levels"
+    n = len(levels)
+    assert list(b["lev"].values.astype(int)) == list(range(1, n + 1)), "lev should be 1..N"
+    a_kept = a.sel(lev=levels).assign_coords(lev=b["lev"].values)          # source on the kept levels, as lev 1..N
+    # what LAGRANTO assumes: the bottom-most N coefficients belong to the N levels of the file
+    am, bm = coef1d(a, "hyam")[np.asarray(levels) - 1], coef1d(a, "hybm")[np.asarray(levels) - 1]
+    ok = len(coef1d(b, "hyam")) == n and np.allclose(coef1d(b, "hyam")[-n:], am) and np.allclose(coef1d(b, "hybm")[-n:], bm)
+    p_std = (coef1d(b, "hyam")[-n:] + coef1d(b, "hybm")[-n:] * 101325.0) / 100.0
+    print(f"  bottom-most {n} coefficients = kept levels {levels[0]}..{levels[-1]}: {ok}  "
+          f"(p at 1013 hPa surface: {p_std[0]:.0f} .. {p_std[-1]:.0f} hPa)")
+    assert ok, "coefficients do not match the kept levels"
+    if "hyai" in b:
+        ai, bi = coef1d(b, "hyai"), coef1d(b, "hybi")
+        th = np.diff(ai + bi * 101325.0)
+        print(f"  {len(ai)} interfaces, layer thickness at 1013 hPa surface {th.min()/100:.1f} .. {th.max()/100:.1f} hPa (all > 0: {bool((th > 0).all())})")
+        assert len(ai) == n + 1 and (th > 0).all(), "interfaces"
     if res is None:
         for v in b.data_vars:
             if "lev" in b[v].dims and v in a:
-                d = float(np.abs(b[v] - a[v].sel(lev=b["lev"])).max())
+                if v in ("p", "dp"):
+                    continue
+                d = float(np.abs(b[v] - a_kept[v]).max())
                 print(f"  {v:8s} max |reduced - source| on kept levels: {d:.3g}")
     else:
         assert abs(float(b["lat"].diff("lat").mean()) - res) < 1e-6, "grid"
         for v in [x for x in b.data_vars if "lat" in b[x].dims]:
-            sa = a[v].sel(lev=b["lev"]) if "lev" in a[v].dims else a[v]
+            if v == "dp":
+                continue
+            sa = a_kept[v] if "lev" in a[v].dims else a[v]
             wa, wb = np.cos(np.deg2rad(a["lat"])), np.cos(np.deg2rad(b["lat"]))
             ma = float(sa.weighted(wa).mean()); mb = float(b[v].weighted(wb).mean())
             print(f"  {v:8s} area mean source {ma:12.5g}   reduced {mb:12.5g}")
     if "p" in b:
-        lev = b["lev"].values.astype(int) - 1
-        hyam = np.asarray(b["hyam"].values).reshape(-1, b["hyam"].shape[-1])[0]
-        hybm = np.asarray(b["hybm"].values).reshape(-1, b["hybm"].shape[-1])[0]
-        pp = hyam[lev] + hybm[lev] * b["PS"].values[..., None] * 100
+        pp = coef1d(b, "hyam") + coef1d(b, "hybm") * b["PS"].values[..., None] * 100
         print(f"  p consistent with hyam/hybm and PS: max diff {float(np.abs(b['p'].values - pp).max()):.3g} Pa")
+        if res is None:
+            print(f"  p equal to the source on the kept levels: max diff {float(np.abs(b['p'] - a_kept['p']).max()):.3g} Pa")
     for c in ("lev", "lat", "lon"):
         ok = a[c].attrs == b[c].attrs
         print(f"  {c} attributes as in the source: {ok}" + ("" if ok else f"  source {a[c].attrs}  reduced {b[c].attrs}"))
