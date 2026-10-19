@@ -34,7 +34,7 @@ issues_*.tsv.
 
   python check_cmip6_6hrlev.py [--quick|--best] [--activity CMIP] [--exp historical]
                                [--njobs 32] [--out DIR] [--only M1,M2]
-                               [--recheck M1,M2] [--fresh]
+                               [--skip M1,M2] [--recheck M1,M2] [--fresh]
 """
 import argparse
 import fcntl
@@ -740,6 +740,8 @@ def main():
     ap.add_argument("--njobs", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 8)))
     ap.add_argument("--out", default=f"/homedata/{os.environ.get('USER', 'mmayer')}/cmip6_check")
     ap.add_argument("--only", default="", help="comma-separated model names")
+    ap.add_argument("--skip", default="",
+                    help="comma-separated models to leave out (e.g. data not accessible right now)")
     ap.add_argument("--recheck", default="",
                     help="comma-separated models whose earlier results are discarded and checked again")
     ap.add_argument("--fresh", action="store_true",
@@ -751,7 +753,10 @@ def main():
                    for s in (args.activity, args.exp)) + \
         ("_quick" if args.quick else "_best" if args.best else "")
 
-    combos = dict(discover(args.activity, args.exp, only))
+    skip = set(filter(None, args.skip.split(",")))
+    combos = {k: d for k, d in discover(args.activity, args.exp, only) if k[0] not in skip}
+    if skip:
+        print(f"skipping {', '.join(sorted(skip))}", flush=True)
     print(f"{len(combos)} model/experiment/member/grid combos with {'+'.join(VARS)} in "
           f"{ROOT}/{args.activity}/*/*/{args.exp}/*/6hrLev", flush=True)
     members = {}

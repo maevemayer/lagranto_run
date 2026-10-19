@@ -16,6 +16,7 @@
 #   --activity ScenarioMIP --exp 'ssp*'  one slice per job
 #   --fresh                              ignore the checkpoint, check everything again
 #   --recheck CESM2,MIROC6               discard and redo the results of these models only
+#   --skip IPSL-CM6A-LR                  leave models out (e.g. their storage is not responding)
 # Default 32 cores (half a zen4 node) starts much sooner than a full node;
 # for more:  sbatch --cpus-per-task=64 --mem=160G tools/check_cmip6_6hrlev.slurm ...
 #
