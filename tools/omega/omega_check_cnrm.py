@@ -106,7 +106,7 @@ import time
 import numpy as np
 import xarray as xr
 
-__version__ = "cnrm-1.11"   # 1.11: daily means of 03/09/15/21 UTC instants by the midpoint rule, donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.6: all dataset versions searched, ua/va/ps aligned on common times; 1.7: W Europe and N Atlantic regions, CMIP6_EXTRA_POOL; 1.8: IPSL half levels, calendar-safe window matching
+__version__ = "cnrm-1.12"   # 1.12: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.11: daily means of 03/09/15/21 UTC instants by the midpoint rule, donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.6: all dataset versions searched, ua/va/ps aligned on common times; 1.7: W Europe and N Atlantic regions, CMIP6_EXTRA_POOL; 1.8: IPSL half levels, calendar-safe window matching
 
 POOL = os.environ.get("CMIP6_POOL", "/pool/data/CMIP6/data")
 # further data roots with the same directory layout (e.g. references downloaded from ESGF), ":"-separated
@@ -127,7 +127,16 @@ def version_dirs(model, table, var, exp="historical"):
     for root in reversed([POOL] + EXTRA_POOLS):                  # pool last -> pool wins
         for p in sorted(glob.glob(f"{root}/*/*/{model}/{exp}/*/{table}/{var}/*/[vl]*")):   # [vl]*: version dirs v2019... or "latest" (ESPRI mirror)
             out[p.split("/")[-5]] = p                            # sorted -> newest version wins
+    if not out and table == "6hrLev" and var == "ps":
+        # the ESPRI mirror has no 6hrLev/ps folder; CMOR stores ps (formula term) in every 6hrLev file
+        out = version_dirs(model, table, "ua", exp)
+        if out and (model, exp) not in _PS_NOTE:
+            _PS_NOTE.add((model, exp))
+            print(f"  note: no 6hrLev/ps for {model} {exp}; ps is read from the ua files")
     return out
+
+
+_PS_NOTE = set()
 
 
 def files_in_range(path, start, end):

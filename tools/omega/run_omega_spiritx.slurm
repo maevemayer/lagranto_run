@@ -8,8 +8,8 @@
 #SBATCH --array=0-2
 #SBATCH --output=/homedata/%u/omega_check/logs/%x_%A_%a.log
 # ---------------------------------------------------------------------------
-# Validation of the diagnosed vertical velocity (omega_check.py 1.7.8 /
-# omega_check_cnrm.py cnrm-1.11) on the ESPRI mirror /bdd/CMIP6, historical, JJA 2000:
+# Validation of the diagnosed vertical velocity (omega_check.py 1.7.9 /
+# omega_check_cnrm.py cnrm-1.12) on the ESPRI mirror /bdd/CMIP6, historical, JJA 2000:
 # computed omega (continuity equation from 6hrLev ua, va, ps) vs the model's own omega.
 #   0 MRI-ESM2-0   native Gaussian grid (gn)            -> standard
 #   1 CNRM-CM6-1   regridded from ARPEGE's reduced grid -> regrid check + unregrid
