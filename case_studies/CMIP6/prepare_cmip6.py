@@ -122,7 +122,9 @@ def to_regular(da, name, units, lev=None):
     lon = da["lon"].values
     da = xr.concat([da.isel(lon=[-1]).assign_coords(lon=[lon[-1] - 360.0]), da,
                     da.isel(lon=[0]).assign_coords(lon=[lon[0] + 360.0])], dim="lon")
-    out = da.interp(lat=LAT_T, lon=LON_T, method="linear", kwargs={"fill_value": None})
+    # "extrapolate": rows beyond the outermost Gaussian latitude (90N, ~0.9 deg away); with any other
+    # fill_value xarray's linear interpolation leaves them NaN (LAGRANTO then writes ****** near the pole)
+    out = da.interp(lat=LAT_T, lon=LON_T, method="linear", kwargs={"fill_value": "extrapolate"})
     out = out.drop_vars([c for c in out.coords if c not in ("lev", "lat", "lon")])
     if "lev" in out.dims:
         out = out.transpose("lev", "lat", "lon").assign_coords(lev=lev)
@@ -130,6 +132,14 @@ def to_regular(da, name, units, lev=None):
     out.attrs = {"units": units}
     out.name = name
     return out
+
+
+def check_finite(dsx, name):
+    """LAGRANTO cannot handle NaN/inf: stop before writing such a file."""
+    bad = {v: int((~np.isfinite(dsx[v].values)).sum()) for v in dsx.data_vars}
+    bad = {v: k for v, k in bad.items() if k}
+    if bad:
+        raise SystemExit(f"{name}: non-finite values {bad}")
 
 
 # ------------------------------------------------------------------ climatology
@@ -269,6 +279,7 @@ def main():
         P = xr.Dataset({"T": T, "U": U, "V": V, "OMEGA": W, "PS": PS,
                         "hyai": ("nhyi", A), "hybi": ("nhyi", B),
                         "hyam": ("nhym", hyam), "hybm": ("nhym", hybm)})
+        check_finite(P, f"P{tag}")
         write_lagranto_netcdf(finish(P, t), os.path.join(DATA_DIR, f"P{tag}"))
 
         TC = to_regular(clim[t], "TCLIM", "K", lev)
@@ -281,6 +292,7 @@ def main():
         TH.attrs = {"units": "K", "long_name": "Potential Temperature"}
         S = xr.Dataset({"THETA": TH, "TCLIM": TC, "DTDT": dTdt, "PS": PS,
                         "hyam": ("nhym", hyam), "hybm": ("nhym", hybm)})
+        check_finite(S, f"S{tag}")
         write_lagranto_netcdf(finish(S, t), os.path.join(DATA_DIR, f"S{tag}"))
         log(f"P/S {tag}")
 
