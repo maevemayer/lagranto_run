@@ -89,7 +89,7 @@ import time
 import numpy as np
 import xarray as xr
 
-__version__ = "1.7.9"   # 1.7.9: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.7.8: daily means of 03/09/15/21 UTC instants by the midpoint rule (NorESM2-MM, SAM0-UNICON), donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.7.1: CSV quoting; 1.7.2: members checked for time coverage, --daily; 1.7.3: all dataset versions searched, ua/va/ps aligned on common times; 1.7.4: W Europe and N Atlantic regions, extra data roots (CMIP6_EXTRA_POOL); 1.7.5: IPSL half levels, calendar-safe matching of 6-h mean windows; 1.7.6: instants at window centres (NorESM); 1.7.7: level order from full-level coefficients (CESM2), donor coefficients (CNRM-CM6-1-HR). omega calculation unchanged since 1.6.2
+__version__ = "1.8.0"   # 1.8.0: --window-scan (with --daily: daily means over 00-24 UTC windows shifted by -12..+12 h vs the reference); 1.7.9: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.7.8: daily means of 03/09/15/21 UTC instants by the midpoint rule (NorESM2-MM, SAM0-UNICON), donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.7.1: CSV quoting; 1.7.2: members checked for time coverage, --daily; 1.7.3: all dataset versions searched, ua/va/ps aligned on common times; 1.7.4: W Europe and N Atlantic regions, extra data roots (CMIP6_EXTRA_POOL); 1.7.5: IPSL half levels, calendar-safe matching of 6-h mean windows; 1.7.6: instants at window centres (NorESM); 1.7.7: level order from full-level coefficients (CESM2), donor coefficients (CNRM-CM6-1-HR). omega calculation unchanged since 1.6.2
 
 POOL = os.environ.get("CMIP6_POOL", "/pool/data/CMIP6/data")
 # further data roots with the same directory layout (e.g. references downloaded from ESGF), ":"-separated
@@ -879,6 +879,37 @@ def _daily_from_instants(x, n_per_day):
 
 
 REF_SHIFT_DAYS = 0        # --ref-shift: add this many days to the reference's date labels
+WINDOW_SCAN = []          # --window-scan: hour offsets of the daily averaging window to compare (--daily)
+
+
+def _window_scan(acc_o, ref, lat_ref, lon_ref, levels):
+    """Scores of daily means over windows [d + o, d + 1 + o] (o = offset in h) vs the reference.
+    Shows which averaging window the reference's daily means actually cover."""
+    print("\n  AVERAGING-WINDOW SCAN: computed daily mean over [day + offset, day + 1 + offset] vs reference,\n"
+          "  |lat| < 70, anomalies (time mean removed per grid point) pooled over all points and levels")
+    print("    offset h     r      slope   RMSE % of sigma   days")
+    res = []
+    for o in sorted(acc_o):
+        days = sorted(d for d, (_, n) in acc_o[o].items() if n == 4)
+        if not days:
+            continue
+        c = xr.DataArray(np.stack([acc_o[o][d][0] / 4 for d in days]), dims=("time", "plev", "lat", "lon"),
+                         coords={"time": days, "plev": np.asarray(levels, float), "lat": lat_ref, "lon": lon_ref})
+        c = _match_grid(c, ref)
+        c, r = _on_dates(c, ref)
+        keep = np.abs(r["lat"]) < 70
+        c, r = c.where(keep), r.where(keep)
+        ca, ra = (c - c.mean("time")).values.ravel(), (r - r.mean("time")).values.ravel()
+        m = np.isfinite(ca) & np.isfinite(ra)
+        ca, ra = ca[m], ra[m]
+        rr = float(np.corrcoef(ca, ra)[0, 1])
+        sl = float(np.sum(ca * ra) / np.sum(ra * ra))
+        rm = float(np.sqrt(np.mean((ca - ra) ** 2)) / np.std(ra) * 100)
+        res.append((o, rr))
+        print(f"    {o:+6d}    {rr:6.3f}   {sl:6.3f}      {rm:5.1f}          {c.sizes['time']}")
+    if res:
+        b = max(res, key=lambda x: x[1])
+        print(f"    -> best window offset {b[0]:+d} h (r = {b[1]:.3f})")
 
 
 def _ref_dates(da, ds=None):
@@ -1573,7 +1604,8 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
     # ---- streaming trapezoidal daily means on pressure levels (window mean -> day of window start)
     acc, accp, cnt = {}, {}, {}
     mid = _midpoint_rule(ds)
-    prev = prevp = prevday = None
+    prev = prevp = prevday = prevt = None
+    acc_o = {o: {} for o in WINDOW_SCAN}
     lat_ref = lon_ref = None
     for i in range(ds.sizes["time"]):
         s = ds[["ua", "va", "ps"]].isel(time=i).load()
@@ -1586,7 +1618,15 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
         cur, curp = op.values.astype(np.float32), ps.values.astype(np.float32)
         day = str(s["time"].dt.strftime("%Y-%m-%d").values)
         if mid:                       # instant = mean of its own 6-h window, which lies in its day
-            prev, prevp, prevday = cur, curp, day
+            prev, prevp, prevday, prevt = cur, curp, day, s["time"]
+        if prev is not None and WINDOW_SCAN:
+            w = 0.5 * (prev + cur)
+            for o in WINDOW_SCAN:     # window start shifted back by o h -> label of the window it belongs to
+                sh = np.timedelta64(o, "h") if np.issubdtype(prevt.dtype, np.datetime64) else datetime.timedelta(hours=o)
+                dl = str((prevt - sh).dt.strftime("%Y-%m-%d").values)
+                e = acc_o[o].setdefault(dl, [np.zeros_like(cur), 0])
+                e[0] += w
+                e[1] += 1
         if prev is not None:
             if prevday not in acc:
                 acc[prevday], accp[prevday], cnt[prevday] = np.zeros_like(cur), np.zeros_like(curp), 0
@@ -1594,7 +1634,7 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
             acc[prevday] += 0.5 * (prev + cur)
             accp[prevday] += 0.5 * (prevp + curp)
             cnt[prevday] += 1
-        prev, prevp, prevday = cur, curp, day
+        prev, prevp, prevday, prevt = cur, curp, day, s["time"]
         if i % 80 == 0:
             print(f"    step {i + 1}/{ds.sizes['time']}  ({time.time() - t0:.0f} s)", flush=True)
     days = sorted(d for d in cnt if cnt[d] == 4)
@@ -1614,6 +1654,8 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
     comp, psd, ref = _on_dates(comp, psd, ref)
     print(f"  compared days: {comp.sizes['time']}")
     _lag_scan(comp, ref, None)
+    if WINDOW_SCAN:
+        _window_scan(acc_o, ref, lat_ref, lon_ref, levels)
 
     land = _load_land(model, exp, member)
     if land is not None:
@@ -2125,6 +2167,9 @@ def main(argv=None):
     ap.add_argument("--fft", action="store_true", help="same as --deriv fft")
     ap.add_argument("--ref-shift", type=int, default=0, metavar="DAYS",
                     help="add DAYS to the date labels of daily-mean references (diagnosis of time-label errors)")
+    ap.add_argument("--window-scan", action="store_true",
+                    help="with --daily: also compare daily means over 00-24 UTC windows shifted by -12..+12 h "
+                         "(which averaging window does the reference cover?)")
     ap.add_argument("--snapshot", default=None,
                     help="time for the snapshot maps, e.g. 2000-06-15T12 (default: first time)")
     ap.add_argument("--cfday", action="store_true",
@@ -2135,8 +2180,9 @@ def main(argv=None):
     ap.add_argument("--compare", action="store_true",
                     help="compute mean/cd, sb/cd, mean/sh, sb/sh and compare them")
     a = ap.parse_args(argv)
-    global DONOR_FOR, REF_SHIFT_DAYS
+    global DONOR_FOR, REF_SHIFT_DAYS, WINDOW_SCAN
     DONOR_FOR = a.model
+    WINDOW_SCAN = [-12, -6, 0, 6, 12] if a.window_scan else []
     REF_SHIFT_DAYS = a.ref_shift
     if REF_SHIFT_DAYS:
         print(f"  note: reference date labels shifted by {REF_SHIFT_DAYS:+d} day(s) (--ref-shift)")
