@@ -1,0 +1,1 @@
+../June_2026/04_run_parallel.csh
