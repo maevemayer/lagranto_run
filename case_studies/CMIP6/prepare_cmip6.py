@@ -27,6 +27,7 @@ Not yet supported (refused with a message):
 Usage (config.sh sourced, see submit_cmip6.sh):
   python prepare_cmip6.py            # all P/S files of the run
   python prepare_cmip6.py --test     # first time step only, with plausibility checks
+  python prepare_cmip6.py --fix-attrs  # only set the variable attributes in existing P/S files
 """
 import os
 import sys
@@ -66,6 +67,23 @@ LEV_ATTRS = {"standard_name": "hybrid_sigma_pressure", "long_name": "hybrid leve
              "units": "level", "positive": "down"}
 LAT_ATTRS = {"standard_name": "latitude", "long_name": "latitude", "units": "degrees_north", "axis": "Y"}
 LON_ATTRS = {"standard_name": "longitude", "long_name": "longitude", "units": "degrees_east", "axis": "X"}
+# variable attributes as in the ERA5 P/S files. LAGRANTO reads the units of the hybrid coefficients:
+# without them ("NetCDF: Attribute not found") it puts every level at the wrong pressure.
+VAR_ATTRS = {
+    "hyai": {"long_name": "hybrid A coefficient at layer interfaces", "units": "Pa"},
+    "hybi": {"long_name": "hybrid B coefficient at layer interfaces", "units": "1"},
+    "hyam": {"long_name": "hybrid A coefficient at layer midpoints", "units": "Pa"},
+    "hybm": {"long_name": "hybrid B coefficient at layer midpoints", "units": "1"},
+    "T": {"standard_name": "air_temperature", "long_name": "Temperature", "units": "K"},
+    "U": {"standard_name": "eastward_wind", "long_name": "U component of wind", "units": "m s**-1"},
+    "V": {"standard_name": "northward_wind", "long_name": "V component of wind", "units": "m s**-1"},
+    "OMEGA": {"standard_name": "lagrangian_tendency_of_air_pressure", "long_name": "Vertical velocity",
+              "units": "Pa s**-1"},
+    "PS": {"units": "hPa", "long_name": "Surface Pressure"},
+    "THETA": {"long_name": "Potential Temperature", "units": "K"},
+    "TCLIM": {"standard_name": "air_temperature", "long_name": "Temperature", "units": "K"},
+    "DTDT": {"units": "K s-1", "long_name": "Time derivative of T_clim"},
+}
 
 
 def log(msg):
@@ -160,8 +178,26 @@ def climatology(targets, member, vdim, flip):
     return {t: acc[t] / len(years) for t in targets}
 
 
+# ------------------------------------------------------------------ attributes of existing files
+def fix_attrs():
+    """Set VAR_ATTRS in place in the P/S files of DATA_DIR (files written before the attributes)."""
+    import glob
+    import netCDF4
+    files = sorted(glob.glob(os.path.join(DATA_DIR, "[PS][0-9]*_[0-9][0-9]")))
+    if not files:
+        raise SystemExit(f"no P/S files in {DATA_DIR}")
+    for f in files:
+        with netCDF4.Dataset(f, "a") as nc:
+            for v, att in VAR_ATTRS.items():
+                if v in nc.variables:
+                    nc.variables[v].setncatts(att)
+    log(f"attributes set in {len(files)} files in {DATA_DIR}")
+
+
 # ------------------------------------------------------------------ main
 def main():
+    if "--fix-attrs" in sys.argv[1:]:
+        return fix_attrs()
     test = "--test" in sys.argv[1:]
     if MODEL in REGRIDDED:
         raise SystemExit(f"{MODEL}: 6hrLev output is regridded from a reduced Gaussian grid; the unregrid "
@@ -213,6 +249,8 @@ def main():
     def finish(dsx, t):
         dsx = dsx.assign_coords(coords)
         dsx["lat"].attrs, dsx["lon"].attrs = LAT_ATTRS, LON_ATTRS
+        for v in dsx.data_vars:
+            dsx[v].attrs = dict(VAR_ATTRS[v])
         return dsx.expand_dims(time=[np.datetime64(t, "ns")])
 
     for t in times:

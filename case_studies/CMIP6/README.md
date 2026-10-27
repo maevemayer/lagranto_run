@@ -26,6 +26,7 @@ first) and noleap/360-day calendars.
 cd ~/code/lagranto_run/case_studies/CMIP6
 ./submit_cmip6.sh --test      # one time step + checks (ω std, T − TCLIM, PS range) in the prepcmip6 log
 ./submit_cmip6.sh             # prepare -> 04 -> 05 -> 06
+./submit_cmip6.sh --from-04   # P/S files already there: 04 -> 05 -> 06
 ```
 
 Model, member, dates, grid: `config.sh` or exported variables, e.g.

@@ -7,15 +7,17 @@
 # Usage:
 #   ./submit_cmip6.sh --test     # one P/S time step + plausibility checks only
 #   ./submit_cmip6.sh            # the whole chain
+#   ./submit_cmip6.sh --from-04  # P/S files exist: 04 -> 05 -> 06 only
 # ===========================================================================
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PIPELINE_DIR="${HERE}"
-TEST=0
+TEST=0; FROM04=0
 case "${1:-}" in
     --test) TEST=1 ;;
+    --from-04) FROM04=1 ;;
     "") ;;
-    *) echo "usage: $0 [--test]"; exit 1 ;;
+    *) echo "usage: $0 [--test | --from-04]"; exit 1 ;;
 esac
 source "${HERE}/config.sh"
 
@@ -41,9 +43,15 @@ if (( TEST )); then
     echo "  prepare --test -> ${j}   (log: ${SLURM_LOG_DIR}/prepcmip6-${j}.out)"
     exit 0
 fi
-j1=$("${SB[@]}" "${HERE}/01_prepare_cmip6.slurm")
-echo "  prepare     -> ${j1}"
-j4=$("${SB[@]}" --dependency=afterok:${j1} --export=ALL,START="${TRAJ_START}",END="${TRAJ_END}" \
+if (( FROM04 )); then
+    if ! ls "${DATA_DIR}"/P[0-9]* >/dev/null 2>&1; then echo "no P-files in ${DATA_DIR}"; exit 1; fi
+    DEP=()
+else
+    j1=$("${SB[@]}" "${HERE}/01_prepare_cmip6.slurm")
+    echo "  prepare     -> ${j1}"
+    DEP=(--dependency=afterok:${j1})
+fi
+j4=$("${SB[@]}" "${DEP[@]}" --export=ALL,START="${TRAJ_START}",END="${TRAJ_END}" \
      "${HERE}/04_run_lagranto.slurm")
 echo "  04 LAGRANTO -> ${j4}"
 j5=$("${SB[@]}" --dependency=afterok:${j4} "${HERE}/05_traj_postprocess.slurm")
