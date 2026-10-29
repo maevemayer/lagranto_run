@@ -20,9 +20,10 @@ Everything below runs on spiritx. Paths use `$USER`, so nothing needs editing
 for a new user except where noted.
 
 ### 1. Access
-- **This repository** is private on GitHub: ask for access, then add an SSH key
-  on spiritx (`ssh-keygen -t ed25519`, paste `~/.ssh/id_ed25519.pub` into
-  GitHub -> Settings -> SSH keys).
+- **This repository** is public: clone it as in step 2 (HTTPS needs no GitHub
+  account). To push, add an SSH key on spiritx (`ssh-keygen -t ed25519`, paste
+  `~/.ssh/id_ed25519.pub` into GitHub -> Settings -> SSH keys) and ask for
+  write access.
 - **ERA5 input**: read access to `/proju/flexpart/flexpart_in/ERA5/EN-true/`
   (1-deg, 3-hourly, all fields per day; check with `ls` on that folder).
 - Storage: `/scratchx/$USER` (netCDF output) and `/homedata/$USER` (env, logs,
@@ -30,7 +31,7 @@ for a new user except where noted.
 
 ### 2. Code
 ```bash
-mkdir -p ~/code && cd ~/code && git clone git@github.com:maevemayer/lagranto_run.git
+mkdir -p ~/code && cd ~/code && git clone https://github.com/maevemayer/lagranto_run.git
 ```
 
 ### 3. Conda env (once, ~30 min)
