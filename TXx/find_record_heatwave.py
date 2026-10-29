@@ -124,15 +124,28 @@ recent_rec = [r for r in rec if r[0].year >= 1900]
 clim = season.groupby(season.index.dayofyear).mean().rolling(31, center=True, min_periods=1).mean()
 print(f"\nWARMEST DAYS (months {months}, separate events >= {SEP} d apart), box-mean daily tas")
 print("   day          tas C   anomaly vs all-years doy mean   6hrLev  TCLIM years (missing)")
+usable = []
 for d, v in top:
     ok, cy, miss = lev_ok(d)
+    if ok and not miss:
+        usable.append((d, v))
     print(f"  {d.date()}   {v:6.2f}      {v - clim.get(d.dayofyear, np.nan):+5.2f}                     "
           f"{'yes' if ok else 'NO '}   {cy} {miss if miss else ''}")
 print("\nRECORD PROGRESSION since 1900 (warmest day of a year that beats all earlier years)")
 for d, v in recent_rec[-12:]:
     print(f"  {d.date()}   {v:6.2f}")
+def command(d):
+    return (f"  cd ~/code/lagranto_run/case_studies/CMIP6 && CMIP6_MODEL={a.model} CMIP6_EXP={a.exp} "
+            f"CMIP6_MEMBER={member} TRAJ_START={(d - pd.Timedelta(days=BEFORE)).date()} "
+            f"TRAJ_END={(d + pd.Timedelta(days=AFTER)).date()} ./submit_cmip6.sh --test")
+
+
 d0, v0 = top[0]
-print(f"\nAbsolute record: {d0.date()} ({v0:.2f} C).  LAGRANTO run for it:")
-print(f"  cd ~/code/lagranto_run/case_studies/CMIP6 && CMIP6_MODEL={a.model} CMIP6_EXP={a.exp} "
-      f"CMIP6_MEMBER={member} TRAJ_START={(d0 - pd.Timedelta(days=BEFORE)).date()} "
-      f"TRAJ_END={(d0 + pd.Timedelta(days=AFTER)).date()} ./submit_cmip6.sh --test")
+print(f"\nAbsolute record: {d0.date()} ({v0:.2f} C).")
+if usable:
+    d1, v1 = usable[0]
+    if d1 != d0:
+        print(f"No 6hrLev data for it; warmest day WITH 6hrLev + TCLIM data: {d1.date()} ({v1:.2f} C).")
+    print("LAGRANTO run:\n" + command(d1))
+else:
+    print(f"None of the top {a.top} days has 6hrLev + TCLIM data; try --top 30.")
