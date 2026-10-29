@@ -5,6 +5,9 @@ ERA5 -> P-files, 9-year T climatology -> S-files, 15-day back-trajectories,
 process decomposition (advection / adiabatic / diabatic / seasonal) and origin
 contributions.
 
+**Overview of all input and traced variables (ERA5 and CMIP6), the trajectory set-up and the
+decomposition: [INPUT_VARIABLES.md](INPUT_VARIABLES.md).**
+
 | path | what |
 |---|---|
 | `case_studies/June_2026/` | the pipeline (stages 01-06, `config.sh`, `submit_all.sh`); see its README |
