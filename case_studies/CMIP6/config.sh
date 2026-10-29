@@ -21,6 +21,10 @@ export CLIM_NYEARS="${CLIM_NYEARS:-9}"
 export CLIM_FIRST_YEAR="${CLIM_FIRST_YEAR:-1950}"
 export CLIM_LAST_YEAR="${CLIM_LAST_YEAR:-2014}"
 
+# Genesis rule of stage 06: interpolated zero crossing of TA (terms add up to TA), see
+# ../June_2026/config.sh; output origin_contributions_zerocross.nc
+export GENESIS_RULE="${GENESIS_RULE:-zero}"
+
 # Grid of the P/S files (linear from the native grid), Northern Hemisphere
 export GRID_DEG="${GRID_DEG:-1.0}"
 export LAT_MIN="${LAT_MIN:-0}"

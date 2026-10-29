@@ -57,6 +57,12 @@ export CLIM_NYEARS="${CLIM_NYEARS:-9}"
 export CLIM_FIRST_YEAR="${CLIM_FIRST_YEAR:-1940}"
 export CLIM_LAST_YEAR="${CLIM_LAST_YEAR:-2025}"
 export CLIM_YEARS="${CLIM_YEARS:-}"
+
+# Genesis rule of stage 06: "hotz" = from the last point with the arrival sign of TA
+# (Hotz et al. 2024, the colleague's tanom files, the PAPER) -> origin_contributions.nc;
+# "zero" = from the interpolated zero crossing of TA, terms add up to TA
+# -> origin_contributions_zerocross.nc (the hotz file is never overwritten).
+export GENESIS_RULE="${GENESIS_RULE:-hotz}"
 # =============================================================================
 
 # ---- Python / CDO environment ----------------------------------------------

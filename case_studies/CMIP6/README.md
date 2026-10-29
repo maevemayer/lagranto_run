@@ -17,6 +17,11 @@ CMIP6 mirror (`/bdd/CMIP6`):
 - interpolates to a regular 1° grid 0–90N, writes P (T, U, V, OMEGA, PS) and S (THETA, TCLIM, DTDT, PS)
   files with lev = 1..N and the coefficients of those N levels.
 
+Stage 06 runs with `GENESIS_RULE=zero` here (integration from the interpolated zero crossing of
+TA, so the process terms add up to TA) and writes `origin_contributions_zerocross.nc`. For an ERA5
+reference with the same rule: `GENESIS_RULE=zero sbatch ../June_2026/06_origin_contributions.slurm`
+(the paper file `origin_contributions.nc`, rule hotz, stays untouched).
+
 Not yet supported: regridded models (CNRM family, EC-Earth3 → need `omega_check_cnrm.py --unregrid`
 first) and noleap/360-day calendars.
 
