@@ -32,7 +32,8 @@ import omega_check as oc  # noqa: E402
 BOX = (-5.5, 5.0, 44.5, 55.0)       # lon0, lon1, lat0, lat1 (paper target box = arrival box)
 SEP = 10                            # days between separate events
 BEFORE, AFTER, BACK = 5, 6, 15      # arrivals event-5 .. event+6; 15-day back-trajectories
-CLIM_NYEARS, CLIM_FIRST, CLIM_LAST = 9, 1950, 2014
+CLIM_NYEARS = 9
+CLIM_RANGE = {"historical": (1950, 2014)}   # TCLIM years inside the run (6hrLev); scenarios: 2015-2100
 
 ap = argparse.ArgumentParser()
 ap.add_argument("model")
@@ -41,8 +42,12 @@ ap.add_argument("--member", default="")
 ap.add_argument("--months", default="5,6,7,8,9")
 ap.add_argument("--top", type=int, default=10)
 ap.add_argument("--outdir", default=".")
+ap.add_argument("--last-year", type=int, default=None,
+                help="ignore days after this year (default: 2100 for scenarios, whose day/tas may run to 2300 while 6hrLev ends in 2100)")
 a = ap.parse_args()
 months = [int(m) for m in a.months.split(",")]
+CLIM_FIRST, CLIM_LAST = CLIM_RANGE.get(a.exp, (2015, 2100))
+LAST_YEAR = a.last_year or (None if a.exp == "historical" else 2100)
 
 
 def overlap(b0, b1, a0, a1):
@@ -73,6 +78,8 @@ member = a.member or ("r1i1p1f1" if "r1i1p1f1" in dirs else sorted(dirs)[0])
 if member not in dirs:
     sys.exit(f"{a.model} {a.exp}: member {member} has no day/tas (members: {sorted(dirs)})")
 files = sorted(f for f in os.listdir(dirs[member]) if f.endswith(".nc"))
+if LAST_YEAR:   # scenario files beyond 2262 cannot be decoded as datetime64; skip what is not needed
+    files = [f for f in files if int(f.rsplit("_", 1)[-1][:4]) <= LAST_YEAR]
 print(f"{a.model} {a.exp} {member}: day/tas, {len(files)} files in {dirs[member]}")
 ds = xr.open_mfdataset([os.path.join(dirs[member], f) for f in files], combine="by_coords",
                        data_vars="minimal", coords="minimal", compat="override")
@@ -106,6 +113,8 @@ def lev_ok(day):
 
 
 season = ser[ser.index.month.isin(months)]
+if LAST_YEAR:
+    season = season[season.index.year <= LAST_YEAR]
 top, used = [], []
 for d, v in season.sort_values(ascending=False).items():
     if all(abs((d - u).days) >= SEP for u in used):
@@ -136,7 +145,7 @@ for d, v in recent_rec[-12:]:
     print(f"  {d.date()}   {v:6.2f}")
 def command(d):
     return (f"  cd ~/code/lagranto_run/case_studies/CMIP6 && CMIP6_MODEL={a.model} CMIP6_EXP={a.exp} "
-            f"CMIP6_MEMBER={member} TRAJ_START={(d - pd.Timedelta(days=BEFORE)).date()} "
+            f"CMIP6_MEMBER={member} CLIM_FIRST_YEAR={CLIM_FIRST} CLIM_LAST_YEAR={CLIM_LAST} TRAJ_START={(d - pd.Timedelta(days=BEFORE)).date()} "
             f"TRAJ_END={(d + pd.Timedelta(days=AFTER)).date()} ./submit_cmip6.sh --test")
 
 
