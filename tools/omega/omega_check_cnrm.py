@@ -106,7 +106,7 @@ import time
 import numpy as np
 import xarray as xr
 
-__version__ = "cnrm-1.12"   # 1.12: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.11: daily means of 03/09/15/21 UTC instants by the midpoint rule, donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.6: all dataset versions searched, ua/va/ps aligned on common times; 1.7: W Europe and N Atlantic regions, CMIP6_EXTRA_POOL; 1.8: IPSL half levels, calendar-safe window matching
+__version__ = "cnrm-1.13"   # 1.13: --daily finds which daily mean the day table holds, decided on ua, and scores against that; 1.12: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.11: daily means of 03/09/15/21 UTC instants by the midpoint rule, donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.6: all dataset versions searched, ua/va/ps aligned on common times; 1.7: W Europe and N Atlantic regions, CMIP6_EXTRA_POOL; 1.8: IPSL half levels, calendar-safe window matching
 
 POOL = os.environ.get("CMIP6_POOL", "/pool/data/CMIP6/data")
 # further data roots with the same directory layout (e.g. references downloaded from ESGF), ":"-separated
@@ -1940,11 +1940,73 @@ def run_cfday(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
     return rows
 
 
+DAY_DEFS = {"trapezoid": "average over 00-24 UTC (trapezoid of 00, 06, 12, 18, 24 UTC)",
+            "plain0018": "plain mean of 00, 06, 12, 18 UTC (centred 09 UTC)",
+            "plain0624": "plain mean of 06, 12, 18, 24 UTC (centred 15 UTC)"}
+
+
+DAY_DEF_MARGIN = 0.005      # r by which a plain mean must beat the 00-24 UTC average (EC-Earth3 ua: 1.000 vs 0.991)
+
+
+def _plain_add(acc, t, x):
+    """Add one instant to the plain daily means. plain0018: its own day; plain0624: 00 UTC counts for the day before."""
+    day = str(t.dt.strftime("%Y-%m-%d").values)
+    h1 = np.timedelta64(1, "h") if np.issubdtype(t.dtype, np.datetime64) else datetime.timedelta(hours=1)
+    for name, dl in (("plain0018", day), ("plain0624", str((t - h1).dt.strftime("%Y-%m-%d").values))):
+        e = acc.setdefault(name, {}).setdefault(dl, [np.zeros_like(x), 0])
+        e[0] += x
+        e[1] += 1
+
+
+def _pooled_r(c, r):
+    """Correlation of anomalies (time mean removed per grid point), |lat| < 70, all points and levels."""
+    c = _match_grid(c, r)
+    c, r = _on_dates(c, r)
+    keep = np.abs(r["lat"]) < 70
+    c, r = c.where(keep), r.where(keep)
+    ca, ra = (c - c.mean("time")).values.ravel(), (r - r.mean("time")).values.ravel()
+    m = np.isfinite(ca) & np.isfinite(ra)
+    return float(np.corrcoef(ca[m], ra[m])[0, 1])
+
+
+def _choose_day_mean(trap, plain_o, plain_u, ref, model, exp, member, start, end, levels, lat, lon, mid):
+    """Which daily mean does the day table hold? EC-Earth3's is the plain mean of 00-18 UTC, not an average over
+    00-24 UTC. Decided on ua, which is not diagnosed, so that a poor omega cannot pick the definition that suits it
+    (on wap only if the member has no day ua). Returns (computed omega with that definition, label, details)."""
+    if mid:
+        return trap, "midpoint", "instants at 03/09/15/21 UTC, midpoint rule"
+
+    def stack(acc):
+        days = sorted(d for d, (_, n) in acc.items() if n == 4)
+        return xr.DataArray(np.stack([acc[d][0] / 4 for d in days]), dims=("time", "plev", "lat", "lon"),
+                            coords={"time": days, "plev": np.asarray(levels, float), "lat": lat, "lon": lon})
+
+    cands = {"trapezoid": trap, "plain0018": stack(plain_o["plain0018"]), "plain0624": stack(plain_o["plain0624"])}
+    ud = _covering(version_dirs(model, "day", "ua", exp), start, end)
+    if member in ud:
+        d = open_files(ud[member], start, end)
+        r = d["ua"].sel(plev=levels, method="nearest").astype(np.float32).load()
+        r = r.assign_coords(plev=np.asarray(levels, float), time=_ref_dates(r, d)).transpose("time", "plev", "lat", "lon").sortby("lat")
+        r = r.drop_vars([c for c in r.coords if c not in ("time", "plev", "lat", "lon")])
+        a, b = stack(plain_u["plain0018"]), stack(plain_u["plain0624"])
+        tests, src = {"trapezoid": 0.5 * (a + b), "plain0018": a, "plain0624": b}, "ua"
+    else:
+        tests, r, src = cands, ref, "wap"
+    sc = {k: _pooled_r(v, r) for k, v in tests.items()}
+    best = max(sc, key=sc.get)
+    if sc[best] - sc["trapezoid"] < DAY_DEF_MARGIN:      # a tie stays what the table's "time: mean" says it is
+        best = "trapezoid"
+    details = f"{DAY_DEFS[best]}; decided on day {src}: " + ", ".join(f"{k} r {v:.4f}" for k, v in sc.items())
+    print(f"  day table holds: {details}")
+    return cands[best], f"{best} from {src}", details
+
+
 def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", member=None,
               outdir=".", make_figure=True, deriv="auto", box=None, fullevel="sb", snapshot=None):
     """Daily means of computed omega on pressure levels vs the model's daily-mean wap (day or Eday).
     For models without a sub-daily (E3hrPt, 6hrPlev) or model-level daily (CFday) reference.
-    The reference is the true daily mean, so the scores include the 6-hourly sampling error."""
+    A true daily mean as reference adds the 6-hourly sampling error to the scores; a plain mean of the same
+    instants (EC-Earth3, found from ua, see _choose_day_mean) does not."""
     t0 = time.time()
     lev, lev_ok = _lev_members(model, exp, start, end)
     ref_dirs = None
@@ -1987,6 +2049,7 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
     # ---- streaming trapezoidal daily means on pressure levels (window mean -> day of window start)
     acc, accp, cnt = {}, {}, {}
     mid = _midpoint_rule(ds)
+    plain_o, plain_u = {}, {}
     prev = prevp = prevday = None
     lat_ref = lon_ref = None
     for i in range(ds.sizes["time"]):
@@ -1998,6 +2061,11 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
         if lat_ref is None:
             lat_ref, lon_ref = op["lat"].values, op["lon"].values
         cur, curp = op.values.astype(np.float32), ps.values.astype(np.float32)
+        if not mid:
+            ua_p = reregrid(terms[0]) if UNREGRID and REREGRID else terms[0]   # as stored, like the day table
+            ua_p = to_plev(ua_p, p, vdim, levels).sortby("lat").values.astype(np.float32)
+            _plain_add(plain_o, s["time"], cur)
+            _plain_add(plain_u, s["time"], ua_p)
         day = str(s["time"].dt.strftime("%Y-%m-%d").values)
         if mid:                       # instant = mean of its own 6-h window, which lies in its day
             prev, prevp, prevday = cur, curp, day
@@ -2024,6 +2092,8 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
     ref = ref.assign_coords(plev=np.asarray(levels, float), time=_ref_dates(ref, dnat)).transpose("time", "plev", "lat", "lon")
     ref = ref.sortby("lat")
     ref = ref.drop_vars([c for c in ref.coords if c not in ("time", "plev", "lat", "lon")])
+    comp, day_def, day_details = _choose_day_mean(comp, plain_o, plain_u, ref, model, exp, member, start, end, levels,
+                                                  lat_ref, lon_ref, mid)
     comp, psd = _match_grid(comp, ref), _match_grid(psd, ref)
     comp, psd, ref = _on_dates(comp, psd, ref)
     if UNREGRID and REREGRID:
@@ -2048,7 +2118,7 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
     for reg in key_regions:
         rows += _scores_agl(comp, ref, psd, lab, masks[reg], reg)
 
-    print(f"\nDAILY  {model} {member}: daily-mean computed omega ({vlab}) vs native {dtable} wap (true daily mean)")
+    print(f"\nDAILY  {model} {member}: daily-mean computed omega ({vlab}) vs native {dtable} wap ({DAY_DEFS.get(day_def.split()[0], day_def)})")
     _print_scores([x for x in rows if x["region"] == "global" and isinstance(x["agl_bin"], float)],
                   "GLOBAL (|lat|<70)")
     _print_regional([x for x in rows if isinstance(x["agl_bin"], float)], [lab], regions)
@@ -2057,9 +2127,11 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
 
     g = [x for x in rows if x["region"] == "global" and isinstance(x["agl_bin"], float) and np.isfinite(x["r"])]
     agl = {x["region"]: x for x in rows if x["agl_bin"] == "0-50" and np.isfinite(x["r"])}
-    L = [f"omega_check {__version__} --daily: {model} {member}, {start}..{end}, reference {dtable} wap, variant {vlab}", "",
-         "DAILY MEANS ON PRESSURE LEVELS (computed from 6-hourly instants vs the model's true daily mean), global |lat|<70",
-         "  includes the error of estimating a daily mean from four 6-hourly snapshots (sampling)",
+    L = [f"omega_check {__version__} --daily: {model} {member}, {start}..{end}, reference {dtable} wap, variant {vlab}",
+         f"The {dtable} table holds: {day_details}", "",
+         "DAILY MEANS ON PRESSURE LEVELS (computed from 6-hourly instants vs the model's daily mean), global |lat|<70",
+         ("  the table is a plain mean of these instants, so no sampling error" if day_def.startswith("plain") else
+          "  includes the error of estimating a daily mean from four 6-hourly snapshots (sampling)"),
          "  hPa    r time   r space   slope   RMSE in % of sigma"]
     for x in g:
         L.append(f"  {x['plev_hPa']:4d}    {x['r_time']:6.3f}   {x['r']:6.3f}   {x['slope']:6.3f}   {x['rmse_pct']:5.0f} %")
@@ -2078,11 +2150,11 @@ def run_daily(model, start="2000-06-01", end="2000-08-31", exp="historical", mem
     with open(os.path.join(outdir, f"omega_check_{tag}_summary.txt"), "w") as f:
         f.write(text + "\n")
     with open(os.path.join(outdir, f"omega_check_{tag}.csv"), "w") as f:
-        f.write("model,member,reference,start,end,variant," + ",".join(COLS) + "\n")
+        f.write("model,member,reference,start,end,variant,day_definition," + ",".join(COLS) + "\n")
         for x in rows:
             vals = [("" if isinstance(x[c], float) and not np.isfinite(x[c]) else
                      str(round(x[c], 5)) if isinstance(x[c], float) else _q(x[c])) for c in COLS]
-            f.write(f"{model},{member},{dtable},{start},{end},{vlab}," + ",".join(vals) + "\n")
+            f.write(f"{model},{member},{dtable},{start},{end},{vlab},{day_def}," + ",".join(vals) + "\n")
     print("\n" + text + "\n")
     if make_figure:
         for fname in _figure_maps(comp, ref, land, model, member, dtable, "daily mean", vlab,

@@ -22,8 +22,16 @@ TA, so the process terms add up to TA) and writes `origin_contributions_zerocros
 reference with the same rule: `GENESIS_RULE=zero sbatch ../June_2026/06_origin_contributions.slurm`
 (the paper file `origin_contributions.nc`, rule hotz, stays untouched).
 
-Not yet supported: regridded models (CNRM family, EC-Earth3 → need `omega_check_cnrm.py --unregrid`
-first) and noleap/360-day calendars.
+Regridded models: the CNRM family's output was remapped from a reduced Gaussian grid. Latitude rows
+interpolated from fewer native points are reconstructed with `omega_check_cnrm.py` before ω is computed,
+for `ua, va, ps`, `ta` and TCLIM. The table of those rows is made once per model by the regrid check
+(`/homedata/$USER/omega_check/results/<model>/regrid/`). The `--test` log reports how much this changes T
+and how well regridding it again returns the file values. EC-Earth3 has no such rows.
+
+Every run logs the model's entry in the ω benchmark table (`tools/omega/omega_benchmark.py`) and keeps it
+as `OMEGA_BENCHMARK.txt` with the P/S files. A flagged model still runs.
+
+Not yet supported: noleap/360-day calendars.
 
 ## Run
 

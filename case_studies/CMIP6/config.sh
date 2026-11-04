@@ -7,7 +7,7 @@
 # ===========================================================================
 
 # ===================== MODEL + EVENT - edit per run ==========================
-export CMIP6_MODEL="${CMIP6_MODEL:-MRI-ESM2-0}"   # native Gaussian grid; regridded models are refused
+export CMIP6_MODEL="${CMIP6_MODEL:-MRI-ESM2-0}"   # native or regridded (reduced-grid rows reconstructed)
 export CMIP6_EXP="${CMIP6_EXP:-historical}"
 export CMIP6_MEMBER="${CMIP6_MEMBER:-}"            # empty: first member with ua/va/ps/ta for the period
 export CMIP6_POOL="${CMIP6_POOL:-/bdd/CMIP6}"      # ESPRI mirror (DKRZ pool layout)

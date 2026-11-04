@@ -37,6 +37,9 @@ echo "arrivals : ${TRAJ_START} 00 UTC .. ${TRAJ_END} 18 UTC, box ${ARRIVAL_LON_M
      "x ${ARRIVAL_LAT_MIN}..${ARRIVAL_LAT_MAX}N, ${ARRIVAL_NLEV} levels ${ARRIVAL_P_BOTTOM}..${ARRIVAL_P_TOP} hPa"
 echo "P/S      : ${DATA_DIR} (${GRID_DEG} deg, ${LAT_MIN}-90N)"
 echo "results  : ${RESULTS_DIR} (trajectories), ${NC_RESULTS_DIR} (netCDF)"
+BENCH="/homedata/${USER}/omega_check/results/omega_benchmark.tsv"
+echo "omega    : $(grep -s "^${CMIP6_MODEL}	" "${BENCH}" | tr '\t' ' ' || true)"
+grep -sq "^${CMIP6_MODEL}	PASS" "${BENCH}" || echo "           *** ${CMIP6_MODEL} has not passed the omega benchmark (${BENCH}) ***"
 
 if (( TEST )); then
     j=$("${SB[@]}" --export=ALL,PREP_ARGS=--test --time=03:00:00 "${HERE}/01_prepare_cmip6.slurm")

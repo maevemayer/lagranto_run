@@ -13,6 +13,6 @@
 set -euo pipefail
 HERE="${PIPELINE_DIR:-${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}}"
 source "${HERE}/config.sh"          # activates the conda env, sets PYTHON
-export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8} OPENBLAS_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8}
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8} OPENBLAS_NUM_THREADS=${SLURM_CPUS_PER_TASK:-8} MPLBACKEND=Agg
 
 "${PYTHON}" "${HERE}/prepare_cmip6.py" ${PREP_ARGS:-}

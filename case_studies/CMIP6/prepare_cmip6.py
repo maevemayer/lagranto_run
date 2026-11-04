@@ -8,6 +8,9 @@ model / experiment / member. Stages 04-06 are then the unchanged ERA5 ones.
            OMEGA is diagnosed from 6hrLev ua, va, ps with the continuity equation on the
            model's native grid, with the validated functions of tools/omega/omega_check.py
            (spherical-harmonic derivatives on Gaussian grids, Simmons & Burridge full levels).
+           Output regridded from a reduced Gaussian grid (CNRM family): latitude rows interpolated
+           from fewer native points are reconstructed first (omega_check_cnrm.py), for ua, va, ps
+           and also ta and TCLIM. The table of those rows is made once per model (regrid check).
   S-files  THETA, TCLIM, DTDT, PS, hyam/hybm
            TCLIM = the model's own climatology by the paper rule: 21-day running-mean T at the
            same 6-hourly slot, averaged over a centred CLIM_NYEARS window around the event year,
@@ -19,9 +22,10 @@ grid, LAT_MIN..90N, lon 0..360-GRID_DEG (as the ERA5 P/S files). Levels top -> s
 lev = 1..N, with the coefficients of exactly these N levels (LAGRANTO takes the level pressures
 from the bottom-most N coefficients). Written with lagranto_io.write_lagranto_netcdf.
 
+The result of the omega benchmark (tools/omega/omega_benchmark.py) is logged and copied to
+DATA_DIR/OMEGA_BENCHMARK.txt; a flagged model still runs.
+
 Not yet supported (refused with a message):
-  * models whose 6hrLev output is regridded from a reduced Gaussian grid (CNRM family,
-    EC-Earth3): they need the unregrid step of tools/omega/omega_check_cnrm.py first;
   * non-standard calendars (noleap/360_day): time stamps must decode to datetime64.
 
 Usage (config.sh sourced, see submit_cmip6.sh):
@@ -29,6 +33,7 @@ Usage (config.sh sourced, see submit_cmip6.sh):
   python prepare_cmip6.py --test     # first time step only, with plausibility checks
   python prepare_cmip6.py --fix-attrs  # only set the variable attributes in existing P/S files
 """
+import json
 import os
 import sys
 import time
@@ -41,11 +46,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools", "omega"))
 sys.path.insert(0, HERE)
-import omega_check as oc  # noqa: E402
 from lagranto_io import write_lagranto_netcdf  # noqa: E402
 
 ENV = os.environ
 MODEL = ENV["CMIP6_MODEL"]
+# 'gr' output that may come from a reduced Gaussian grid: omega_check_cnrm.py has the same omega
+# calculation plus the reconstruction; the regrid check decides per model whether any row needs it
+REGRIDDED = ("CNRM-CM6-1", "CNRM-ESM2-1", "CNRM-CM6-1-HR", "EC-Earth3", "EC-Earth3-Veg",
+             "EC-Earth3-Veg-LR", "EC-Earth3-AerChem", "EC-Earth3-CC")
+if MODEL in REGRIDDED:
+    import omega_check_cnrm as oc  # noqa: E402
+else:
+    import omega_check as oc  # noqa: E402
 EXP = ENV.get("CMIP6_EXP", "historical")
 MEMBER = ENV.get("CMIP6_MEMBER", "")
 DATA_DIR = ENV["DATA_DIR"]
@@ -60,8 +72,7 @@ CLIM_LAST_YEAR = int(ENV.get("CLIM_LAST_YEAR", "2014"))
 HALF_WIN = 10                            # days: 21-day running mean
 DT = pd.Timedelta(hours=6)
 KAPPA = 287.0 / 1004.0                   # as stage 03
-REGRIDDED = ("CNRM-CM6-1", "CNRM-ESM2-1", "CNRM-CM6-1-HR", "EC-Earth3", "EC-Earth3-Veg",
-             "EC-Earth3-Veg-LR", "EC-Earth3-AerChem", "EC-Earth3-CC")
+OMEGA_RESULTS = ENV.get("OMEGA_RESULTS", f"/homedata/{ENV.get('USER', '')}/omega_check/results")
 LEV_ATTRS = {"standard_name": "hybrid_sigma_pressure", "long_name": "hybrid level at layer midpoints",
              "formula": "hyam hybm (mlev=hyam+hybm*aps)", "formula_terms": "ap: hyam b: hybm ps: aps",
              "units": "level", "positive": "down"}
@@ -109,6 +120,48 @@ def on_levels(da, vdim, flip):
     if flip:
         da = da.isel({vdim: slice(None, None, -1)})
     return da.rename({vdim: "lev"}) if vdim != "lev" else da
+
+
+# ------------------------------------------------------------------ reduced-grid reconstruction
+def load_regrid_table(member, nlon):
+    """Rows of a regridded model that came from fewer native points (oc.UNREGRID); made once per model."""
+    if MODEL not in REGRIDDED:
+        return
+    outdir = os.path.join(OMEGA_RESULTS, MODEL, "regrid")
+    path = os.path.join(outdir, f"regrid_{MODEL}.json")
+    if not os.path.exists(path):
+        log(f"no regrid table for {MODEL}: running the regrid check -> {path}")
+        oc.regrid_check(MODEL, EXP, member, outdir)
+    with open(path) as fh:
+        table_nlon = json.load(fh)["nlon"]
+    if table_nlon != nlon:
+        raise SystemExit(f"{path} is for {table_nlon} longitudes, the data have {nlon}")
+    oc.UNREGRID = oc.load_unregrid(path)
+    log(f"reduced-grid reconstruction: {len(oc.UNREGRID)} latitude rows ({path})")
+
+
+def undo_regrid(x):
+    """T or TCLIM with the reconstruction of ua, va, ps; rows where it fails keep the regridded values."""
+    if not getattr(oc, "UNREGRID", None):
+        return x
+    y, x = oc.unregrid(x), x.sortby("lat")
+    bad = (~np.isfinite(y) | (y < 100.0) | (y > 350.0)).any([d for d in y.dims if d != "lat"])
+    if bool(bad.any()):
+        log(f"  note: reconstruction of T unphysical on {int(bad.sum())} rows, those keep the regridded values")
+    return y.where(~bad, x)
+
+
+# ------------------------------------------------------------------ omega benchmark
+def report_benchmark():
+    """Status of this model in the benchmark table: logged and kept with the P/S files."""
+    path = os.path.join(OMEGA_RESULTS, "omega_benchmark.tsv")
+    line = f"{MODEL}\tNOT_BENCHMARKED\tno entry in {path}"
+    if os.path.exists(path):
+        with open(path) as fh:
+            line = next((x.rstrip("\n") for x in fh if x.startswith(MODEL + "\t")), line)
+    log("omega benchmark: " + line.replace("\t", " | "))
+    with open(os.path.join(DATA_DIR, "OMEGA_BENCHMARK.txt"), "w") as fh:
+        fh.write(line + "\n")
 
 
 # ------------------------------------------------------------------ grid
@@ -185,7 +238,7 @@ def climatology(targets, member, vdim, flip):
     bad = [t for t in targets if cnt[t] != len(years)]
     if bad:
         raise SystemExit(f"climatology incomplete for {len(bad)} times, e.g. {bad[:3]}")
-    return {t: acc[t] / len(years) for t in targets}
+    return {t: undo_regrid(acc[t] / len(years)) for t in targets}
 
 
 # ------------------------------------------------------------------ attributes of existing files
@@ -209,12 +262,10 @@ def main():
     if "--fix-attrs" in sys.argv[1:]:
         return fix_attrs()
     test = "--test" in sys.argv[1:]
-    if MODEL in REGRIDDED:
-        raise SystemExit(f"{MODEL}: 6hrLev output is regridded from a reduced Gaussian grid; the unregrid "
-                         "step (tools/omega/omega_check_cnrm.py --unregrid) is not wired in here yet")
     oc.DONOR_FOR = MODEL
     oc.LON_DERIV = "cd"
     os.makedirs(DATA_DIR, exist_ok=True)
+    report_benchmark()
     times = pd.date_range(TRAJ_START - pd.Timedelta(days=BACK_DAYS), TRAJ_END, freq=DT)
     if test:
         times = times[:1]
@@ -232,6 +283,7 @@ def main():
     log(f"member {member}: " + ", ".join(f"{v} {dirs[v][member]}" for v in dirs))
     ds = {v: open_var(dirs[v][member], times[0], times[-1]) for v in dirs}
     uvps = xr.merge([ds["ua"][["ua"]], ds["va"][["va"]], ds["ps"][["ps"]]], compat="override", join="inner")
+    load_regrid_table(member, uvps.sizes["lon"])
 
     A, B, vdim, flip = oc.half_level_coeffs(ds["ua"], "ua")
     At, Bt, vdim_t, flip_t = oc.half_level_coeffs(ds["ta"], "ta")
@@ -268,7 +320,8 @@ def main():
         terms = oc.flux_terms(uvps.sel(time=t).load(), A, B, vdim, flip, deriv)
         om, _ = oc.omega_from_terms(terms, A, B, vdim, "sb", deriv)
         u, v, ps = terms[0], terms[1], terms[2]
-        ta = on_levels(ds["ta"]["ta"].sel(time=t), vdim_t, flip_t).load()
+        ta_file = on_levels(ds["ta"]["ta"].sel(time=t), vdim_t, flip_t).load()
+        ta = undo_regrid(ta_file)
         rn = lambda x: x.rename({vdim: "lev"}) if vdim != "lev" else x
         T = to_regular(ta, "T", "K", lev)
         U = to_regular(rn(u), "U", "m s-1", lev)
@@ -310,6 +363,11 @@ def main():
                   f"    DTDT ~500 hPa |max| {float(abs(dTdt[k5]).max()) * 86400:.3f} K/day\n"
                   f"    THETA lowest level {float(TH[kb].min()):.1f}..{float(TH[kb].max()):.1f} K",
                   flush=True)
+            if getattr(oc, "UNREGRID", None):
+                t0 = ta_file.sortby("lat")
+                print(f"    reconstruction of T: changes it by rms {float(np.sqrt(((ta - t0) ** 2).mean())):.3f} K, "
+                      f"regridded again it returns the file values to rms "
+                      f"{float(np.sqrt(((oc.reregrid(ta) - t0) ** 2).mean())):.4f} K", flush=True)
     log("done")
 
 
