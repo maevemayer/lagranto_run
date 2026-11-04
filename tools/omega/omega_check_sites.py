@@ -5,6 +5,8 @@ time: point', every 30 min, on model levels, sampled on the model's native grid 
 No daily mean and no vertical interpolation enter, so neither sampling nor the time definition of a day table
 can affect the scores. Each 6-hourly instant is compared with the same instant in the nearest column.
 Controls in the log: surface pressure of the same columns, and a time-lag scan, which must peak at 0.
+The files are read by computed record, with the time stamp of each record checked: their time axes are stored
+in chunks of one record, so reading a whole axis (263000 values in IPSL-CM6A-LR) takes hours on /bdd.
 With a reconstruction (--unregrid, CNRM family) the computed field is on the full Gaussian grid but the site on the
 native reduced grid: the columns are then up to half a native cell apart, so the scores are a lower limit.
 
@@ -12,10 +14,12 @@ native reduced grid: the columns are then up to half a native cell apart, so the
     python omega_check_sites.py CNRM-ESM2-1 --unregrid regrid_CNRM-ESM2-1.json --outdir results/CNRM-ESM2-1/benchmark
 """
 import argparse
+import glob
 import os
 import sys
 import time
 
+import netCDF4
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -58,12 +62,15 @@ try:
     deriv = "sh"
 except ValueError:
     deriv = "cd"
-site = oc.open_files(sd[member], a.start, a.end)
-sv = [d for d in site["wap"].dims if d not in ("time", "site")][0]
-print(f"{a.model} {member} {a.start}..{a.end}: {site.sizes['site']} columns, {site.sizes[sv]} site levels, "
-      f"{ds.sizes[vdim]} 6hrLev levels, deriv {deriv}, wap cell_methods '{site['wap'].attrs.get('cell_methods')}'", flush=True)
+SITE_FILES = [netCDF4.Dataset(f) for f in sorted(glob.glob(os.path.join(sd[member], "*.nc")))
+              if int(f.rsplit("_", 1)[-1][:4]) <= int(a.end[:4]) and int(f.rsplit("-", 1)[-1][:4]) >= int(a.start[:4])]
+site = SITE_FILES[0]
+if site["wap"].dimensions[0] != "time" or site["wap"].dimensions[-1] != "site":
+    sys.exit(f"unexpected dimensions of CFsubhr wap: {site['wap'].dimensions}")
+print(f"{a.model} {member} {a.start}..{a.end}: {site.dimensions['site'].size} columns, {site['wap'].shape[1]} site levels, "
+      f"{ds.sizes[vdim]} 6hrLev levels, deriv {deriv}, wap cell_methods '{site['wap'].cell_methods}'", flush=True)
 
-slat, slon = site["latitude"].values, ((site["longitude"].values + 180) % 360) - 180
+slat, slon = site["latitude"][:].data, ((site["longitude"][:].data + 180) % 360) - 180
 lats, lons = np.sort(ds["lat"].values), ds["lon"].values
 ilat = np.array([np.abs(lats - x).argmin() for x in slat])
 ilon = np.array([np.abs(((lons - x + 180) % 360) - 180).argmin() for x in slon])
@@ -82,13 +89,21 @@ for i in range(ds.sizes["time"]):
         print(f"    step {i + 1}/{ds.sizes['time']} ({time.time() - t0:.0f} s)", flush=True)
 C, P, S, T = np.stack(C), np.stack(P), np.stack(S), pd.DatetimeIndex(np.array(T))
 
-wap = site["wap"].transpose("time", sv, "site").load()
-psite = site["ps"].transpose("time", "site").load()
 
-
-def at(da, minutes=0):
-    # reindex: a lag can reach outside the loaded period, those instants become NaN and drop out of the scores
-    return da.reindex(time=T + pd.Timedelta(minutes=minutes), method="nearest", tolerance=pd.Timedelta(minutes=5)).values
+def at(var, minutes=0):
+    """var at the instants T + minutes, NaN where a file has no record within 5 min of it."""
+    shape = (len(T),) + site[var].shape[1:]
+    out = np.full(shape, np.nan, dtype="float32")
+    for i, t in enumerate(T + pd.Timedelta(minutes=minutes)):
+        for n in SITE_FILES:
+            tv = n["time"]
+            first, step = float(tv[0]), float(tv[1]) - float(tv[0])
+            want = netCDF4.date2num(t.to_pydatetime(), tv.units, tv.calendar)
+            k = int(round((want - first) / step))
+            if 0 <= k < tv.shape[0] and abs(float(tv[k]) - want) <= 5.0 / 1440:
+                out[i] = np.ma.filled(n[var][k].astype("float32"), np.nan)
+                break
+    return out
 
 
 def anom(x):                                     # time mean removed per column and level
@@ -100,15 +115,16 @@ def corr(c, r):
     return float(np.corrcoef(c[m], r[m])[0, 1])
 
 
-Rt = at(wap)
+Rt = at("wap")
 same, flipped = corr(anom(C).ravel(), anom(Rt).ravel()), corr(anom(C).ravel(), anom(Rt[:, ::-1, :]).ravel())
 order = -1 if flipped > same else 1
 print(f"  level order of the sites found from the data: as computed r {same:.3f}, reversed r {flipped:.3f}")
 Rt = Rt[:, ::order, :]
-print(f"  control, surface pressure of the same columns: r {corr(anom(S).ravel(), anom(at(psite)).ravel()):.4f}, "
-      f"mean difference {np.nanmean(S - at(psite)):+.1f} Pa, rms {np.sqrt(np.nanmean((S - at(psite)) ** 2)):.1f} Pa")
+Ps = at("ps")
+print(f"  control, surface pressure of the same columns: r {corr(anom(S).ravel(), anom(Ps).ravel()):.4f}, "
+      f"mean difference {np.nanmean(S - Ps):+.1f} Pa, rms {np.sqrt(np.nanmean((S - Ps) ** 2)):.1f} Pa")
 print("  time lag (reference shifted), r: " + "  ".join(
-    f"{m:+d} min {corr(anom(C).ravel(), anom(at(wap, m)[:, ::order, :]).ravel()):.3f}" for m in LAGS), flush=True)
+    f"{m:+d} min {corr(anom(C).ravel(), anom(at('wap', m)[:, ::order, :]).ravel()):.3f}" for m in LAGS), flush=True)
 
 Ca, Ra = anom(C), anom(Rt)
 Slat, Slo = np.broadcast_to(slat[None, None, :], C.shape), np.broadcast_to(slon[None, None, :], C.shape)
