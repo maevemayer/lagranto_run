@@ -7,8 +7,11 @@ can affect the scores. Each 6-hourly instant is compared with the same instant i
 Controls in the log: surface pressure of the same columns, and a time-lag scan, which must peak at 0.
 The files are read by computed record, with the time stamp of each record checked: their time axes are stored
 in chunks of one record, so reading a whole axis (263000 values in IPSL-CM6A-LR) takes hours on /bdd.
-With a reconstruction (--unregrid, CNRM family) the computed field is on the full Gaussian grid but the site on the
-native reduced grid: the columns are then up to half a native cell apart, so the scores are a lower limit.
+The reported latitude and longitude of a site are only the point CFMIP asked for. Where the file gives real cell
+bounds (CNRM family, reduced grid) the column is the centre of those bounds, on its Gaussian row, and the computed
+field is taken there by its band-limited Fourier series along the row: the reported point is up to 2 deg of longitude
+from that column, and using it costs CNRM-ESM2-1 r 0.98 against 1.000. Where the bounds only mark the reported point
+(IPSL, +-0.01 deg) the nearest grid point is used.
 
     python omega_check_sites.py IPSL-CM6A-LR --outdir results/IPSL-CM6A-LR/benchmark
     python omega_check_sites.py CNRM-ESM2-1 --unregrid regrid_CNRM-ESM2-1.json --outdir results/CNRM-ESM2-1/benchmark
@@ -71,19 +74,36 @@ print(f"{a.model} {member} {a.start}..{a.end}: {site.dimensions['site'].size} co
       f"{ds.sizes[vdim]} 6hrLev levels, deriv {deriv}, wap cell_methods '{site['wap'].cell_methods}'", flush=True)
 
 slat, slon = site["latitude"][:].data, ((site["longitude"][:].data + 180) % 360) - 180
+blat, blon = np.deg2rad(site["bounds_latitude"][:].data), np.deg2rad(site["bounds_longitude"][:].data)
+on_cells = float(np.mean(blat.max(axis=1) - blat.min(axis=1))) > np.deg2rad(0.1)
+if on_cells:
+    slat = np.rad2deg(blat).mean(axis=1)
+    slon = np.rad2deg(np.arctan2(np.sin(blon).mean(axis=1), np.cos(blon).mean(axis=1)))
 lats, lons = np.sort(ds["lat"].values), ds["lon"].values
 ilat = np.array([np.abs(lats - x).argmin() for x in slat])
 ilon = np.array([np.abs(((lons - x + 180) % 360) - 180).argmin() for x in slon])
 dlat, dlon = np.abs(lats[ilat] - slat), np.abs(((lons[ilon] - slon + 180) % 360) - 180)
-print(f"  nearest column: up to {dlat.max():.2f} deg latitude, {dlon.max():.2f} deg longitude away", flush=True)
+print(f"  columns from {'the cell bounds, Fourier series along the row' if on_cells else 'the reported points, nearest grid point'}: "
+      f"up to {dlat.max():.2f} deg latitude, {dlon.max():.2f} deg longitude from a grid point", flush=True)
+phase = np.exp(2j * np.pi * np.arange(len(lons) // 2 + 1) * (((slon - lons[0] + 180) % 360) - 180)[:, None] / 360.0)
+
+
+def pick(x):
+    """x (..., lat, lon) at the columns (..., site)."""
+    if not on_cells:
+        return x[..., ilat, ilon]
+    F = np.fft.rfft(x[..., ilat, :], axis=-1)
+    return (F[..., 0].real + 2 * (F[..., 1:-1] * phase[:, 1:-1]).real.sum(axis=-1) + (F[..., -1] * phase[:, -1]).real) / len(lons)
+
+
 C, P, S, T = [], [], [], []
 for i in range(ds.sizes["time"]):
     s = ds[["ua", "va", "ps"]].isel(time=i).load()
     terms = oc.flux_terms(s, A, B, vdim, flip, deriv)
     om, p = oc.omega_from_terms(terms, A, B, vdim, "sb", deriv)
-    C.append(om.sortby("lat").transpose(vdim, "lat", "lon").values[:, ilat, ilon])
-    P.append(p.sortby("lat").transpose(vdim, "lat", "lon").values[:, ilat, ilon])
-    S.append(terms[2].sortby("lat").transpose("lat", "lon").values[ilat, ilon])
+    C.append(pick(om.sortby("lat").transpose(vdim, "lat", "lon").values))
+    P.append(pick(p.sortby("lat").transpose(vdim, "lat", "lon").values))
+    S.append(pick(terms[2].sortby("lat").transpose("lat", "lon").values))
     T.append(s["time"].values)
     if i % 40 == 0:
         print(f"    step {i + 1}/{ds.sizes['time']} ({time.time() - t0:.0f} s)", flush=True)

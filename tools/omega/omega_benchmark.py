@@ -18,6 +18,15 @@ daily). Where a day table is a plain mean of the same four instants (EC-Earth3) 
 such a model and one with a true daily mean do not face the same test. omega_check --daily finds the
 definition from ua and scores against it; the table records it ("no definition check" for older files).
 
+The separate column "criterion" is a fixed limit, not a comparison with the reference: it decides whether a model
+is left out when the Lagrangian analysis is reviewed. Flagged models still run. On the model's best comparison, in
+the same region, at any of 850-250 hPa it fails if
+    r_time < MIN_R  or  RMSE % > MAX_RMSE  or  slope outside SLOPE_RANGE
+which gives EXCLUDE. A failure on daily means only is REVIEW while within DAILY_NEAR of those limits, as the
+sampling error alone takes MPI-ESM1-2-HR from r 0.997-1.000 and RMSE 2-8 % to r 0.90-0.96 and RMSE 23-31 %.
+A model in REFERENCE_IN_DOUBT is at most REVIEW. The layer near the surface is not part of it: EC-Earth3 has
+RMSE 42 % at 1000 hPa with r 0.992-0.999 at 850-500 hPa.
+
     python omega_benchmark.py --site spiritx --results /homedata/$USER/omega_check/results
     python omega_benchmark.py --chain origin_contributions_zerocross.nc     # quality of a finished run
 """
@@ -29,7 +38,7 @@ import sys
 import numpy as np
 import pandas as pd
 
-__version__ = "1.0"
+__version__ = "1.1"
 REFERENCE = {"spiritx": "MRI-ESM2-0", "levante": "MPI-ESM1-2-HR"}
 TOL_R, TOL_SLOPE, TOL_RMSE = 0.02, 0.03, 10.0
 LEVELS = (850, 700, 500, 250)
@@ -42,6 +51,13 @@ REGION = "N Atlantic-Europe"
 # no benchmark possible, with the reason
 NOT_COMPUTABLE = {"ACCESS-ESM1-5": "hybrid height coordinate, omega not implemented",
                   "IPSL-CM6A-MR1": "piControl only, no historical JJA 2000 run"}
+# fixed limits of the criterion column; daily scores near them (margins as in the docstring) stay under review
+MIN_R, MAX_RMSE, SLOPE_RANGE = 0.9, 50.0, (0.8, 1.2)
+DAILY_NEAR = dict(r=0.8, rmse=75.0, slope=(0.7, 1.3))
+# scored against a wap that may not be the true omega
+REFERENCE_IN_DOUBT = {"IPSL-CM6A-LR": "wap looks like the mass flux through hybrid surfaces, not omega (925 hPa r 0.26 vs omega, "
+                                       "0.83 vs that flux), but the flux from 6hrLev winds is itself too weak (slope 0.6), open",
+                      "IPSL-CM6A-LR-INCA": "same model code as IPSL-CM6A-LR, wap in doubt"}
 # chain benchmark of a finished run, set by MRI-ESM2-0 historical 1953: valid 100 %, gap +0.004 K, p99 0.51 K
 CHAIN_VALID, CHAIN_GAP, CHAIN_P99 = 99.5, 0.05, 1.0
 
@@ -100,10 +116,40 @@ def failures(cand, ref):
     return bad
 
 
-def benchmark(model, ref_rows, results):
+def criterion(model, rows):
+    """Fixed limits on the model's best comparison: (PASS, REVIEW, EXCLUDE or -, details)."""
+    for tier in TIERS:
+        ct, cg = pick(rows, tier)
+        if cg is None:
+            continue
+        levels = at_levels(cg, REGION if (cg["region"] == REGION).any() else "global")
+        if not levels:
+            continue
+        instant = tier[0] == "instantaneous"
+        bad, far = [], False
+        for lev, c in levels.items():
+            r = c["r_time"] if np.isfinite(c["r_time"]) else c["r"]
+            if r < MIN_R:
+                bad.append(f"{lev}: r {r:.2f}")
+            if c["rmse_pct"] > MAX_RMSE:
+                bad.append(f"{lev}: RMSE {c['rmse_pct']:.0f}%")
+            if not SLOPE_RANGE[0] <= c["slope"] <= SLOPE_RANGE[1]:
+                bad.append(f"{lev}: slope {c['slope']:.2f}")
+            far = far or r < DAILY_NEAR["r"] or c["rmse_pct"] > DAILY_NEAR["rmse"] \
+                or not DAILY_NEAR["slope"][0] <= c["slope"] <= DAILY_NEAR["slope"][1]
+        worst = f"{tier[0]} vs {ct}: r >= {min(c['r_time'] if np.isfinite(c['r_time']) else c['r'] for c in levels.values()):.3f}, " \
+                f"RMSE <= {max(c['rmse_pct'] for c in levels.values()):.0f}%"
+        if not bad:
+            return "PASS", worst
+        status = "EXCLUDE" if instant or far else "REVIEW"
+        note = [REFERENCE_IN_DOUBT[model]] if model in REFERENCE_IN_DOUBT else []
+        return ("REVIEW" if note else status), f"{tier[0]} vs {ct}: " + "; ".join(bad + note)
+    return "-", "no score at 850-250 hPa"
+
+
+def benchmark(model, ref_rows, rows):
     if model in NOT_COMPUTABLE:
         return "NOT_BENCHMARKED", "-", NOT_COMPUTABLE[model]
-    rows = load_scores(results, model)
     if not rows:
         return "NOT_BENCHMARKED", "-", "no score file"
     for tier in TIERS:
@@ -157,16 +203,18 @@ def main():
     models = a.models or sorted(os.path.basename(os.path.dirname(p)) for p in glob.glob(os.path.join(a.results, "*", ""))
                                  if os.path.basename(os.path.dirname(p)) != "logs")
     models = sorted(set(models) | set(NOT_COMPUTABLE))
-    lines = [f"model\tstatus\tcompared in\tdetails (reference model {refm}, omega_benchmark {__version__})"]
+    lines = [f"model\tstatus\tcriterion\tcompared in\tdetails (reference model {refm}, omega_benchmark {__version__})\tcriterion details"]
     out = a.out or os.path.join(a.results, "omega_benchmark.tsv")
     for m in models:
+        rows = load_scores(a.results, m)
         if m == refm:
-            has_instant = pick(load_scores(a.results, m), TIERS[0])[1] is not None
+            has_instant = pick(rows, TIERS[0])[1] is not None
             st, where, why = "REFERENCE", "-", "" if has_instant else "NO INSTANTANEOUS CHECK"
         else:
-            st, where, why = benchmark(m, ref_rows, a.results)
-        lines.append(f"{m}\t{st}\t{where}\t{why}")
-        print(f"{m:20s} {st:16s} {where:45s} {why}")
+            st, where, why = benchmark(m, ref_rows, rows)
+        crit, cwhy = criterion(m, rows) if rows else ("-", "")
+        lines.append(f"{m}\t{st}\t{crit}\t{where}\t{why}\t{cwhy}")
+        print(f"{m:20s} {st:16s} {crit:8s} {where:45s} {why}" + (f"  | {cwhy}" if cwhy else ""))
     with open(out, "w") as fh:
         fh.write("\n".join(lines) + "\n")
     print("->", out)

@@ -86,10 +86,12 @@ import os
 import sys
 import time
 
+import cftime
+import netCDF4
 import numpy as np
 import xarray as xr
 
-__version__ = "1.9.0"   # 1.9.0: --daily finds which daily mean the day table holds (plain means of 00-18 or 06-24 UTC, or an average over 00-24 UTC), decided on ua, and scores against that; 1.8.0: --window-scan (with --daily: daily means over 00-24 UTC windows shifted by -12..+12 h vs the reference); 1.7.9: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.7.8: daily means of 03/09/15/21 UTC instants by the midpoint rule (NorESM2-MM, SAM0-UNICON), donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.7.1: CSV quoting; 1.7.2: members checked for time coverage, --daily; 1.7.3: all dataset versions searched, ua/va/ps aligned on common times; 1.7.4: W Europe and N Atlantic regions, extra data roots (CMIP6_EXTRA_POOL); 1.7.5: IPSL half levels, calendar-safe matching of 6-h mean windows; 1.7.6: instants at window centres (NorESM); 1.7.7: level order from full-level coefficients (CESM2), donor coefficients (CNRM-CM6-1-HR). omega calculation unchanged since 1.6.2
+__version__ = "1.9.1"   # 1.9.1: open_files reads only the records it needs from the time axis (chunks of 1 record take hours on /bdd), omega unchanged; 1.9.0: --daily finds which daily mean the day table holds (plain means of 00-18 or 06-24 UTC, or an average over 00-24 UTC), decided on ua, and scores against that; 1.8.0: --window-scan (with --daily: daily means over 00-24 UTC windows shifted by -12..+12 h vs the reference); 1.7.9: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.7.8: daily means of 03/09/15/21 UTC instants by the midpoint rule (NorESM2-MM, SAM0-UNICON), donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.7.1: CSV quoting; 1.7.2: members checked for time coverage, --daily; 1.7.3: all dataset versions searched, ua/va/ps aligned on common times; 1.7.4: W Europe and N Atlantic regions, extra data roots (CMIP6_EXTRA_POOL); 1.7.5: IPSL half levels, calendar-safe matching of 6-h mean windows; 1.7.6: instants at window centres (NorESM); 1.7.7: level order from full-level coefficients (CESM2), donor coefficients (CNRM-CM6-1-HR). omega calculation unchanged since 1.6.2
 
 POOL = os.environ.get("CMIP6_POOL", "/pool/data/CMIP6/data")
 # further data roots with the same directory layout (e.g. references downloaded from ESGF), ":"-separated
@@ -195,12 +197,50 @@ def _lev_members(model, exp, start, end):
     return lev, ok
 
 
+def _time_window(f, start, end):
+    """Records of file f that can fall in start..end, found without reading the whole time axis:
+    many files store it in chunks of 1 record, which on /bdd takes hours for a 1950-2015 file.
+    None (read the whole axis) if the axis is not regular or the dates do not fit its calendar."""
+    with netCDF4.Dataset(f) as n:
+        if "time" not in n.variables or n["time"].shape[0] < 3:
+            return None
+        t = n["time"]
+        nt = t.shape[0]
+        first, step = float(t[0]), float(t[1]) - float(t[0])
+        if step <= 0 or abs((float(t[-1]) - first) / (nt - 1) - step) > 1e-6:
+            return None
+        cal = getattr(t, "calendar", "standard")
+        try:
+            lo, hi = [cftime.datetime(*(int(x) for x in d.split("-")), calendar=cal) for d in (start, end)]
+        except (ValueError, TypeError):
+            return None
+        lo, hi = netCDF4.date2num(lo, t.units, cal), netCDF4.date2num(hi + datetime.timedelta(days=1), t.units, cal)
+        i0, i1 = max(0, int(np.floor((lo - first) / step)) - 1), min(nt, int(np.ceil((hi - first) / step)) + 2)
+        if i0 >= i1 or not np.allclose(t[i0:i1], first + np.arange(i0, i1) * step, rtol=0, atol=1e-6):
+            return None
+        return slice(i0, i1)
+
+
+def _open_window(f, w):
+    """File f cut to records w. time is dropped on opening, as xarray would index all of it."""
+    ds = xr.open_dataset(f, decode_times=False, chunks={}, drop_variables="time").isel(time=w)
+    with netCDF4.Dataset(f) as n:
+        t = n["time"]
+        ds = ds.assign_coords(time=("time", np.asarray(t[w], float), {k: t.getncattr(k) for k in t.ncattrs()}))
+    return xr.decode_cf(ds, mask_and_scale=False)
+
+
 def open_files(path, start, end):
     """Open and concatenate along time only the time-dependent variables
     (keeps ap_bnds, b_bnds, ... as they are)."""
     files = files_in_range(path, start, end)
-    ds = xr.open_mfdataset(files, combine="by_coords", data_vars="minimal",
-                           coords="minimal", compat="override")
+    windows = [_time_window(f, start, end) for f in files]
+    if all(w is not None for w in windows):
+        ds = xr.combine_by_coords([_open_window(f, w) for f, w in zip(files, windows)], data_vars="minimal",
+                                  coords="minimal", compat="override", combine_attrs="override")
+    else:
+        ds = xr.open_mfdataset(files, combine="by_coords", data_vars="minimal",
+                               coords="minimal", compat="override")
     return ds.sel(time=slice(start, end))
 
 
