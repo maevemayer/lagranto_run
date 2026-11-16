@@ -62,6 +62,13 @@ within the first 6 h) gives 0 K. Tested on 2026-05-27 12 UTC: our means match
 hers to 0.01 K (diabatic), 0.1 K (adiabatic), 0.25 K (advective). Results from
 before need stages 05 and 06 rerun (nothing else).
 
+**Default since Nov 2026: `GENESIS_RULE=zero`.** Stage 06 integrates from the zero
+crossing of TA, interpolated inside the 6-h interval, so the terms add up to TA
+(residual ~0.02 K) and writes `origin_contributions_zerocross.nc`. The rule above
+(`GENESIS_RULE=hotz`, the paper) leaves the anomaly between the zero crossing and
+the last same-sign point (~0.5-0.8 K) unattributed; it still writes
+`origin_contributions.nc`, which a zero run never overwrites.
+
 ## Winds: no cos(lat) fix needed on spiritx
 
 On Levante the DKRZ pool's spectral u/v (U*cos(lat), V*cos(lat)) went through
