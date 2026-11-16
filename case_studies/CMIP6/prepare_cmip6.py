@@ -58,6 +58,7 @@ if MODEL in REGRIDDED:
     import omega_check_cnrm as oc  # noqa: E402
 else:
     import omega_check as oc  # noqa: E402
+LMDZ_PREFIX = ("IPSL-CM6A",)   # LMDZ atmosphere (IPSL-CM6A-LR, -LR-INCA, -MR1)
 EXP = ENV.get("CMIP6_EXP", "historical")
 MEMBER = ENV.get("CMIP6_MEMBER", "")
 DATA_DIR = ENV["DATA_DIR"]
@@ -291,6 +292,8 @@ def main():
         raise SystemExit("ua and ta have different vertical coefficients")
     n = len(A) - 1
     deriv = ENV.get("OMEGA_DERIV", "auto")
+    if deriv == "auto" and MODEL.startswith(LMDZ_PREFIX):
+        deriv = "lmdz"      # LMDZ archives two-point averaged winds: recover the C-grid ones (omega_check 1.10)
     if deriv == "auto":
         try:
             oc._sh_for(np.sort(uvps["lat"].values), uvps["lon"].values)

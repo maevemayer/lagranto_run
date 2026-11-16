@@ -51,11 +51,12 @@ with --box also zoomed versions (_box_maps, _box_skillmaps).
 Options added in 1.5 (to isolate the causes of the amplitude underestimation)
     --fullevel mean|sb   omega on full levels as the mean of the two half levels (mean)
                          or with the exact Simmons & Burridge (1981) full-level formula (sb, default)
-    --deriv auto|cd|fft|sh  horizontal derivatives (auto = sh on Gaussian grids, else cd), centred
+    --deriv auto|cd|fft|sh|lmdz  horizontal derivatives (auto = sh on Gaussian grids, else cd), centred
                          differences (cd), Fourier in
                          longitude (fft), or spherical harmonics (sh; Gaussian grids only, i.e.
                          spectral models; divergence and grad(ln ps) computed as in the model:
-                         div(v dp) = dp*D + dB * v.grad(ps))
+                         div(v dp) = dp*D + dB * v.grad(ps)), or lmdz (IPSL-CM6A: C-grid winds
+                         recovered from LMDZ's two-point averages, fluxes as in the model; 1.10)
     --compare            compute mean/cd, sb/cd, mean/sh, sb/sh in one pass and print a
                          side-by-side table (+ omega_check_<model>_compare.csv/.png)
     4x4 coarse scores now use only points valid in both fields before averaging
@@ -91,7 +92,7 @@ import netCDF4
 import numpy as np
 import xarray as xr
 
-__version__ = "1.9.1"   # 1.9.1: open_files reads only the records it needs from the time axis (chunks of 1 record take hours on /bdd), omega unchanged; 1.9.0: --daily finds which daily mean the day table holds (plain means of 00-18 or 06-24 UTC, or an average over 00-24 UTC), decided on ua, and scores against that; 1.8.0: --window-scan (with --daily: daily means over 00-24 UTC windows shifted by -12..+12 h vs the reference); 1.7.9: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.7.8: daily means of 03/09/15/21 UTC instants by the midpoint rule (NorESM2-MM, SAM0-UNICON), donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.7.1: CSV quoting; 1.7.2: members checked for time coverage, --daily; 1.7.3: all dataset versions searched, ua/va/ps aligned on common times; 1.7.4: W Europe and N Atlantic regions, extra data roots (CMIP6_EXTRA_POOL); 1.7.5: IPSL half levels, calendar-safe matching of 6-h mean windows; 1.7.6: instants at window centres (NorESM); 1.7.7: level order from full-level coefficients (CESM2), donor coefficients (CNRM-CM6-1-HR). omega calculation unchanged since 1.6.2
+__version__ = "1.10.0"   # 1.10.0: --deriv lmdz (IPSL: C-grid winds recovered from the two-point averages LMDZ archives), other omega unchanged; 1.9.1: open_files reads only the records it needs from the time axis (chunks of 1 record take hours on /bdd), omega unchanged; 1.9.0: --daily finds which daily mean the day table holds (plain means of 00-18 or 06-24 UTC, or an average over 00-24 UTC), decided on ua, and scores against that; 1.8.0: --window-scan (with --daily: daily means over 00-24 UTC windows shifted by -12..+12 h vs the reference); 1.7.9: 6hrLev ps read from the ua files when there is no 6hrLev/ps folder (ESPRI mirror); 1.7.8: daily means of 03/09/15/21 UTC instants by the midpoint rule (NorESM2-MM, SAM0-UNICON), donor coefficients kept in data order, reference dates from time bounds, time-lag check, --ref-shift; 1.7.1: CSV quoting; 1.7.2: members checked for time coverage, --daily; 1.7.3: all dataset versions searched, ua/va/ps aligned on common times; 1.7.4: W Europe and N Atlantic regions, extra data roots (CMIP6_EXTRA_POOL); 1.7.5: IPSL half levels, calendar-safe matching of 6-h mean windows; 1.7.6: instants at window centres (NorESM); 1.7.7: level order from full-level coefficients (CESM2), donor coefficients (CNRM-CM6-1-HR). omega calculation unchanged since 1.6.2
 
 POOL = os.environ.get("CMIP6_POOL", "/pool/data/CMIP6/data")
 # further data roots with the same directory layout (e.g. references downloaded from ESGF), ":"-separated
@@ -595,11 +596,71 @@ def _sh_for(lat, lon):
     return _SH_CACHE[key]
 
 
+# ======================================== LMDZ C-grid winds (IPSL-CM6A)
+# LMDZ (dynphy_lonlat/calfis.F) archives physics-grid winds that are two-point averages of the
+# C-grid winds: u(i) = (U(i-1/2) + U(i+1/2))/2 along a row, v(j) = (V(j-1/2) + V(j+1/2))/2 along a
+# column. Centred differences of those give cos^2(k dx/2) dU/dx + cos^2(l dy/2) dV/dy, i.e. too
+# little divergence (slope ~0.6 against the archived flux). deriv "lmdz" recovers U and V on the
+# C-grid with a regularised inverse (gain c/(c^2 + lam s^2), c, s = cos, sin(k dx/2); in latitude the
+# same as least squares with a 0.25*lam difference penalty), then forms the layer mass fluxes
+# with two-point mean dp, as in the model (caldyn.F massbar/flumass/convmas), and v.grad(ps) on the
+# C-grid averaged back to scalar points. Tested June 2000 against CFsubhr wap (2026-11-05):
+# flux r 0.80 -> 0.94, slope 0.59 -> 0.88 at 850 hPa, N Atlantic-Europe. Unreliable poleward of
+# ~60 deg on invented winds (2 dx ringing from the poles). Pole rows are set to 0 (dropped later).
+LMDZ_LAMBDA = 0.05
+_LMDZ_CACHE = {}
+
+
+def _lmdz_ops(lat, lon, lam):
+    key = (lat.size, lon.size, float(lat[0]), float(lon[0]), lam)
+    if key in _LMDZ_CACHE:
+        return _LMDZ_CACHE[key]
+    nlat, nlon = lat.size, lon.size
+    dl = lat[1] - lat[0]
+    if not (np.allclose(np.diff(lat), dl, atol=1e-3) and abs(lat[0] + 90) < 1e-3 and abs(lat[-1] - 90) < 1e-3):
+        raise ValueError("deriv 'lmdz' needs regular latitudes from pole to pole (LMDZ scalar grid)")
+    if not np.allclose(np.diff(lon), 360.0 / nlon, atol=1e-3):
+        raise ValueError("deriv 'lmdz' needs regular global longitudes")
+    k = np.arange(nlon // 2 + 1)
+    c, s = np.cos(np.pi * k / nlon), np.sin(np.pi * k / nlon)
+    gx = c / (c ** 2 + lam * s ** 2) * np.exp(1j * np.pi * k / nlon)       # u(i) -> U(i+1/2)
+    Aa = np.zeros((nlat - 2, nlat - 1))
+    Dd = np.zeros((nlat - 2, nlat - 1))
+    for i in range(nlat - 2):
+        Aa[i, i], Aa[i, i + 1] = 0.5, 0.5
+        Dd[i, i], Dd[i, i + 1] = -1.0, 1.0
+    gy = np.linalg.solve(Aa.T @ Aa + 0.25 * lam * Dd.T @ Dd + 1e-9 * np.eye(nlat - 1), Aa.T)  # v(1..nlat-2) -> V(j+1/2)
+    ops = dict(gx=gx, gy=gy, dlam=2 * np.pi / nlon, dphi=np.deg2rad(dl), cosf=np.cos(np.deg2rad(lat)),
+               cosh=np.cos(np.deg2rad(0.5 * (lat[1:] + lat[:-1]))))
+    _LMDZ_CACHE[key] = ops
+    return ops
+
+
+def _lmdz_terms(u, v, ps, dp, lat, lon, lam=None):
+    """fd = div(v dp) per layer and v.grad(ps) from LMDZ physics-grid winds. u, v, dp (lev, lat, lon),
+    ps (lat, lon), latitudes ascending from -90 to 90. Pole rows 0."""
+    o = _lmdz_ops(lat, lon, LMDZ_LAMBDA if lam is None else lam)
+    nlon = lon.size
+    U = np.fft.irfft(np.fft.rfft(u, axis=-1) * o["gx"], n=nlon, axis=-1)                 # at i+1/2
+    V = np.einsum("ab,lbk->lak", o["gy"], v[:, 1:-1, :], optimize=True)                  # at j+1/2
+    acf = A_EARTH * o["cosf"][None, :, None]
+    Fx = U * 0.5 * (dp + np.roll(dp, -1, axis=-1))
+    Fy = V * 0.5 * (dp[:, 1:, :] + dp[:, :-1, :]) * o["cosh"][None, :, None]
+    fd = np.zeros_like(u)
+    fd[:, 1:-1, :] = ((Fx - np.roll(Fx, 1, axis=-1))[:, 1:-1, :] / o["dlam"]
+                      + (Fy[:, 1:, :] - Fy[:, :-1, :]) / o["dphi"]) / acf[:, 1:-1, :]
+    Gx = U * (np.roll(ps, -1, axis=-1) - ps)[None] / (acf * o["dlam"])                  # at i+1/2
+    Gy = V * ((ps[1:, :] - ps[:-1, :]) / (A_EARTH * o["dphi"]))[None]                     # at j+1/2
+    vgrad = np.zeros_like(u)
+    vgrad[:, 1:-1, :] = (0.5 * (Gx + np.roll(Gx, 1, axis=-1)))[:, 1:-1, :] + 0.5 * (Gy[:, 1:, :] + Gy[:, :-1, :])
+    return fd, vgrad
+
+
 # ===================================================== omega computation
 def flux_terms(s, A, B, vdim, flip, deriv):
     """Mass-flux divergence div(v dp) per layer and v.grad(ps), for ONE time step.
     Returns (u, v, ps, dp, fd, vgrad) as DataArrays, levels ordered top -> surface."""
-    if deriv == "sh":
+    if deriv in ("sh", "lmdz"):
         s = s.sortby("lat")
     u, v, ps = s["ua"], s["va"], s["ps"]
     if flip:
@@ -617,6 +678,13 @@ def flux_terms(s, A, B, vdim, flip, deriv):
         gx, gy = ps.copy(data=gx) * ps, ps.copy(data=gy) * ps        # grad(ps) = ps * grad(ln ps)
         vgrad = u * gx + v * gy
         fd = dp * D + dB * vgrad
+    elif deriv == "lmdz":
+        u = u.transpose(vdim, "lat", "lon")
+        v = v.transpose(vdim, "lat", "lon")
+        dp = dp.transpose(vdim, "lat", "lon")
+        f64 = lambda x: np.asarray(x.values, np.float64)
+        fdn, vgn = _lmdz_terms(f64(u), f64(v), f64(ps), f64(dp), ps["lat"].values, ps["lon"].values)
+        fd, vgrad = u.copy(data=fdn), u.copy(data=vgn)
     else:
         fd = _div(u * dp, v * dp)
         c = np.cos(np.deg2rad(ps["lat"]))
@@ -2273,7 +2341,7 @@ def main(argv=None):
     ap.add_argument("--no-figure", action="store_true")
     ap.add_argument("--fullevel", choices=("mean", "sb"), default="sb",
                     help="full-level omega: Simmons & Burridge (default) or half-level mean")
-    ap.add_argument("--deriv", choices=("auto", "cd", "fft", "sh"), default="auto",
+    ap.add_argument("--deriv", choices=("auto", "cd", "fft", "sh", "lmdz"), default="auto",
                     help="horizontal derivatives: auto (default: spherical harmonics on Gaussian grids, "
                          "else centred differences), cd, fft, sh")
     ap.add_argument("--fft", action="store_true", help="same as --deriv fft")
