@@ -17,11 +17,11 @@ From the per-arrival lagrangian_terms_*.nc written by stage 05
     the total-TA genesis.
 
 GENESIS_RULE (config.sh):
-  hotz  (default, paper) integration from the last point with the arrival sign of TA
+  hotz  (paper; GENESIS_RULE=hotz) integration from the last point with the arrival sign of TA
         (Hotz et al. 2024, as the colleague's tanom files). The anomaly gained between the
         zero crossing and that point (on average ~0.5 K) is not attributed, so the
         process terms add up to TA(arrival) - TA(genesis).
-  zero  integration from the zero crossing of TA, linearly interpolated inside the 6-h
+  zero  (default) integration from the zero crossing of TA, linearly interpolated inside the 6-h
         interval where TA changes sign: each process also gets that fraction of its
         crossing-interval term, so the terms add up to TA (residual ~0.02 K). TA genesis
         position and TA_genesis_step are interpolated the same way (step may be fractional).
@@ -46,7 +46,7 @@ import xarray as xr
 
 NC_RESULTS_DIR = os.environ["NC_RESULTS_DIR"]
 IN_DIR = os.path.join(NC_RESULTS_DIR, "traj_netcdfs")
-GENESIS_RULE = os.environ.get("GENESIS_RULE", "hotz")
+GENESIS_RULE = os.environ.get("GENESIS_RULE", "zero")
 if GENESIS_RULE not in ("hotz", "zero"):
     sys.exit(f"GENESIS_RULE must be 'hotz' or 'zero', not '{GENESIS_RULE}'")
 OUT_FILE = os.path.join(NC_RESULTS_DIR, "origin_contributions.nc" if GENESIS_RULE == "hotz"
